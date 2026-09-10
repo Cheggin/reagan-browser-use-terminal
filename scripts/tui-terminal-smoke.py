@@ -410,7 +410,7 @@ def start_session(
     tmux("resize-window", "-t", session, "-x", "120", "-y", "28")
     select_arg = "--select-latest " if select_latest else ""
     command = (
-        f"cd {ROOT} && BUT_TELEMETRY=0 OPENAI_API_KEY=but-smoke-key "
+        f"cd {ROOT} && OPENAI_API_KEY=but-smoke-key "
         f"LLM_BROWSER_OPENAI_API_KEY=but-smoke-key OPENROUTER_API_KEY=but-smoke-key "
         f"LLM_BROWSER_OPENAI_COMPAT_API_KEY=but-smoke-key {binary} "
         f"--state-dir {state_dir} --seed-demo {seed_demo} {select_arg}"
@@ -952,7 +952,7 @@ def smoke_escape_pauses_running_session(binary: Path) -> None:
         tmux_send(session, "Escape")
         paused = wait_for(
             session,
-            "What should the model do differently? If something went wrong, please use /feedback :)",
+            "What should the model do differently?",
             "escape-paused",
         )
         paused = wait_for(

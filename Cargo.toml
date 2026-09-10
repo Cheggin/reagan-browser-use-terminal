@@ -12,9 +12,6 @@ members = [
   "crates/browser-use-store",
   "crates/browser-use-tui",
 ]
-exclude = [
-  "feedback-ingest",
-]
 resolver = "2"
 
 [workspace.package]
@@ -60,9 +57,6 @@ tree-sitter = "0.25.10"
 tree-sitter-bash = "0.25"
 tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 uuid = { version = "1", features = ["v4"] }
-opentelemetry = { version = "0.32", features = ["trace"] }
-opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client", "reqwest-rustls"] }
-opentelemetry_sdk = { version = "0.32", features = ["trace"] }
 open = "5.3"
 portable-pty = "0.9"
 pulldown-cmark = "0.10"

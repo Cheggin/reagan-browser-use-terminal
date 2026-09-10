@@ -9,7 +9,9 @@ Automate the boring stuff in the browser.
 Browser Use Terminal is a Rust TUI for browser agents. It combines a new LLM harness, Browser Harness-style CDP control, real Chrome sessions, and a terminal UI you can actually steer.
 
 ```bash
-curl -fsSL https://browser-use.com/terminal/install.sh | sh
+uv sync
+scripts/dev-bin.sh
+export PATH="$PWD/target/dev-bin:$PATH"
 browser
 ```
 
@@ -76,7 +78,6 @@ Use slash commands inside the TUI:
 /auth      sign in
 /model     choose a model
 /browser   choose local, headless, or cloud browser
-/update    update the app
 ```
 
 Useful shell commands:
@@ -131,7 +132,11 @@ manually.
 
 ### Telemetry
 
-You can disable (100% completely anonymous) telemetry with  `BUT_TELEMETRY=0`.
+This private build removes product analytics, remote trace reporting, feedback uploads, and background update checks. Build and run this checkout using the commands above.
+
+Session history, prompts, screenshots, and artifacts stay in the local state directory. Selected model providers, cloud browsers, MCP servers, and visited websites still receive the requests needed for their services. `http_get()` sends requests directly to the requested site.
+
+Dependency downloads happen during explicit setup. Cost estimates use built-in or existing local pricing data; missing prices remain unknown.
 
 ## Docs
 

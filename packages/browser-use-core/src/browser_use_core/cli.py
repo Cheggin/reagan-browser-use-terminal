@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -33,9 +34,8 @@ def _exec_or_run_from_source(package: str, binary: str, args: list[str]) -> None
         source_root = _source_repo_root(_package_dir())
         if source_root:
             os.chdir(source_root)
-            _ensure_agent_ripgrep(source_root)
             _configure_agent_tools_env(source_root / "target" / "debug" / "agent-tools")
-            raise SystemExit(subprocess.call(["cargo", "run", "-q", "-p", package, "--", *args]))
+            raise SystemExit(subprocess.call(["cargo", "run", "--offline", "-q", "-p", package, "--", *args]))
         raise
     _configure_agent_tools_env()
     os.execv(path, [path, *args])
@@ -51,9 +51,11 @@ def _configure_agent_tools_env(agent_tools_path: Path | None = None) -> None:
         try:
             candidate = Path(agent_tools_dir())
         except BinaryNotFoundError:
-            return
+            candidate = None
 
-    if not _agent_tools_dir_contains_ripgrep(candidate):
+    if candidate is None or not _agent_tools_dir_contains_ripgrep(candidate):
+        if shutil.which("rg") is None:
+            raise BinaryNotFoundError("ripgrep is not installed. Install ripgrep and put rg on PATH before launching.")
         return
 
     os.environ[AGENT_TOOLS_DIR_ENV] = str(candidate)
@@ -64,20 +66,3 @@ def _prepend_path(directory: Path) -> None:
     directory_str = str(directory)
     path_parts = [part for part in os.environ.get("PATH", "").split(os.pathsep) if part and part != directory_str]
     os.environ["PATH"] = os.pathsep.join([directory_str, *path_parts])
-
-
-def _ensure_agent_ripgrep(repo_root: Path) -> None:
-    script = repo_root / "scripts" / "install-agent-ripgrep.sh"
-    if not script.exists():
-        return
-    dest = repo_root / "target" / "debug" / "agent-tools"
-    rg = dest / "rg"
-    rg_exe = dest / "rg.exe"
-    if rg.exists() or rg_exe.exists():
-        return
-    subprocess.run(
-        [str(script), str(dest)],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
-    )

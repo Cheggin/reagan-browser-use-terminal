@@ -272,9 +272,6 @@ impl ChildAgentRunner {
 }
 
 /// Per-run knobs the TUI/CLI assemble before starting a session.
-///
-/// Mirrors `browser-use-core::AgentRunOptions` (`lib.rs:202`), including every
-/// field and the exact default values.
 #[derive(Clone, Debug)]
 pub struct AgentRunOptions {
     pub max_turns: usize,
@@ -306,9 +303,6 @@ pub struct AgentRunOptions {
     pub model_compaction_enabled: bool,
     pub model_auto_compact_token_limit: Option<i64>,
     pub model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope,
-    pub analytics_source: Option<String>,
-    pub analytics_provider_kind: Option<String>,
-    pub analytics_model: Option<String>,
     /// Persist exact provider input (system/messages/tool schemas) in
     /// `model.turn.request` events. Default `false` keeps local CLI/TUI history
     /// compact and avoids duplicating screenshots/prompt text every turn.
@@ -379,9 +373,6 @@ impl Default for AgentRunOptions {
             model_compaction_enabled: true,
             model_auto_compact_token_limit: None,
             model_auto_compact_token_limit_scope: AutoCompactTokenLimitScope::Total,
-            analytics_source: None,
-            analytics_provider_kind: None,
-            analytics_model: None,
             full_llm_input_events: false,
             mcp_servers: HashMap::new(),
             // Default preserves the prior non-interactive behavior: tools
@@ -539,11 +530,6 @@ impl AgentRunOptions {
         scope: AutoCompactTokenLimitScope,
     ) -> Self {
         self.model_auto_compact_token_limit_scope = scope;
-        self
-    }
-
-    pub fn with_analytics_source(mut self, source: impl Into<String>) -> Self {
-        self.analytics_source = Some(source.into());
         self
     }
 
@@ -1872,9 +1858,6 @@ command = "profile-server"
         assert!(options.final_output_json_schema.is_none());
         assert!(options.final_output_json_schema_strict);
         assert!(options.model_compaction_enabled);
-        assert!(options.analytics_source.is_none());
-        assert!(options.analytics_provider_kind.is_none());
-        assert!(options.analytics_model.is_none());
         assert!(!options.full_llm_input_events);
         assert!(options.mcp_servers.is_empty());
         // Approval defaults preserve prior non-interactive behavior.

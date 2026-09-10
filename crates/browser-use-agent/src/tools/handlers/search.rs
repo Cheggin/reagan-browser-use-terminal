@@ -279,13 +279,6 @@ impl Approvable<SearchRequest> for SearchTool {
     fn sandbox_permissions(&self, _req: &SearchRequest) -> SandboxPermissions {
         SandboxPermissions::UseDefault
     }
-
-    // `exec_approval_requirement` is intentionally left at its trait default
-    // (`None`): the search is a benign, read-only HTTP GET (the Python action had
-    // no approval gate either). Returning `None` lets the orchestrator apply
-    // `default_exec_approval_requirement`, which yields `Skip` under any
-    // non-prompting policy. The outbound request mirrors the crate's existing
-    // network usage (the MCP HTTP client, analytics) which is likewise ungated.
 }
 
 impl Sandboxable for SearchTool {

@@ -393,8 +393,8 @@ fn record_python_response_events_inner(
         "data": response.data,
         "images": response.images,
         "artifacts": response.artifacts,
-        "browser_harness_available": response.browser_harness_available,
-        "browser_harness_error": response.browser_harness_error,
+
+
     });
     if let Some(artifact) = text_artifact.as_ref() {
         payload["text_truncated"] = Value::Bool(true);

@@ -674,7 +674,7 @@ pub enum ProviderResolveError {
     /// The Python worker subprocess could not be started for the run.
     ///
     /// The legacy run path starts ONE [`PythonWorker`] per run (eager, via
-    /// `start_with_browser_mode_and_env`) and threads it through dispatch; if
+    /// `start_with_env`) and threads it through dispatch; if
     /// that spawn fails we surface it as a typed error rather than silently
     /// dropping the `python` tool (which would be a hidden regression). Carries
     /// the underlying error's message.
@@ -1057,7 +1057,7 @@ pub fn resolve_provider_with_tool_paths(
 
 /// Start the run's single Python worker subprocess (eager, matching legacy
 /// `run_existing_session_from_config`, which spawns one
-/// `PythonWorker::start_with_browser_mode_and_env` per run and threads it through
+/// `PythonWorker::start_with_env` per run and threads it through
 /// dispatch).
 ///
 /// `browser_mode` + `python_env` come from the run config's [`AgentRunOptions`],
@@ -1075,11 +1075,8 @@ pub fn resolve_provider_with_tool_paths(
 fn start_python_backend(
     config: &ProviderRunConfig,
 ) -> Result<Arc<dyn PythonBackend>, ProviderResolveError> {
-    let backend = crate::tools::handlers::python::RealBackend::start(
-        config.options.browser_mode.as_deref(),
-        &config.options.python_env,
-    )
-    .map_err(|e| ProviderResolveError::PythonWorker(e.to_string()))?;
+    let backend = crate::tools::handlers::python::RealBackend::start(&config.options.python_env)
+        .map_err(|e| ProviderResolveError::PythonWorker(e.to_string()))?;
     Ok(Arc::new(backend))
 }
 
@@ -3165,8 +3162,6 @@ mod tests {
                 artifacts: vec![],
                 images: vec![],
                 browser_events: vec![],
-                browser_harness_available: false,
-                browser_harness_error: None,
             })
         }
     }

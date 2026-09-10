@@ -14,9 +14,7 @@ pub(crate) enum PaletteAction {
     ManageDomains,
     ConfigureEmail,
     Reload,
-    Update,
     Exit,
-    Feedback,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -26,7 +24,7 @@ pub(crate) struct PaletteItem {
     pub(crate) action: PaletteAction,
 }
 
-const VISIBLE_ITEMS: [PaletteItem; 13] = [
+const VISIBLE_ITEMS: [PaletteItem; 12] = [
     PaletteItem {
         command: "/task",
         description: "start a new task",
@@ -87,14 +85,9 @@ const VISIBLE_ITEMS: [PaletteItem; 13] = [
         description: "give the agent a disposable inbox for sign-ups, links & codes",
         action: PaletteAction::ConfigureEmail,
     },
-    PaletteItem {
-        command: "/feedback",
-        description: "report a bug or share feedback",
-        action: PaletteAction::Feedback,
-    },
 ];
 
-const HIDDEN_ITEMS: [PaletteItem; 4] = [
+const HIDDEN_ITEMS: [PaletteItem; 3] = [
     PaletteItem {
         command: "/auth",
         description: "sign in to a provider",
@@ -104,11 +97,6 @@ const HIDDEN_ITEMS: [PaletteItem; 4] = [
         command: "/reload",
         description: "restart the UI in this terminal",
         action: PaletteAction::Reload,
-    },
-    PaletteItem {
-        command: "/update",
-        description: "install the latest release",
-        action: PaletteAction::Update,
     },
     PaletteItem {
         command: "/exit",
@@ -143,6 +131,14 @@ pub(crate) fn selected_action(filter: &str, selected_row: usize) -> Option<Palet
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vendor_reporting_and_update_commands_are_unavailable() {
+        for command in ["/feedback", "/update"] {
+            assert!(items_filtered(command).is_empty());
+            assert_eq!(selected_action(command, 0), None);
+        }
+    }
 
     #[test]
     fn reload_is_available_as_hidden_command() {

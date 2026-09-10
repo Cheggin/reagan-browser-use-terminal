@@ -94,8 +94,6 @@ fn ok_response(text: &str, ok: bool) -> RunPythonResponse {
         artifacts: Vec::new(),
         images: Vec::new(),
         browser_events: Vec::new(),
-        browser_harness_available: false,
-        browser_harness_error: None,
     }
 }
 
@@ -316,13 +314,10 @@ async fn structured_result_is_rendered_into_stdout() {
     assert!(out.stdout.contains("\"items\""), "{:?}", out.stdout);
 }
 
-// An uncaught-exception traceback (`error`) and a browser-harness setup error
-// are surfaced distinctly on stderr.
 #[tokio::test]
-async fn traceback_and_harness_error_are_surfaced_distinctly() {
+async fn traceback_is_preserved_with_partial_output() {
     let mut canned = ok_response("partial output", false);
     canned.error = Some("Traceback (most recent call last):\n  ValueError: nope".to_string());
-    canned.browser_harness_error = Some("harness failed to start".to_string());
     let backend = Arc::new(FakeBackend::new(canned));
     let tool = tool_with(Arc::clone(&backend));
 
@@ -334,13 +329,6 @@ async fn traceback_and_harness_error_are_surfaced_distinctly() {
     // The traceback is on stderr verbatim.
     assert!(out.stderr.contains("Traceback"), "{:?}", out.stderr);
     assert!(out.stderr.contains("ValueError: nope"), "{:?}", out.stderr);
-    // The harness error is labeled distinctly (not folded into the traceback).
-    assert!(
-        out.stderr
-            .contains("[python:browser_harness_error] harness failed to start"),
-        "{:?}",
-        out.stderr
-    );
 }
 
 // Oversized stdout is capped (the full text is persisted durably elsewhere) so a

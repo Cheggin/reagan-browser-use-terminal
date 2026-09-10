@@ -26,17 +26,18 @@ If you cannot install it, ask the user to.
 
 ## 2. Install Browser Use Terminal
 
+Run from this private checkout:
+
 ```bash
-curl -fsSL https://browser-use.com/terminal/install.sh | sh
-export PATH="$HOME/.local/bin:$PATH"   # the installer edits the shell profile, but YOUR current shell needs this
-browser-use-terminal --version         # verify
+uv sync
+scripts/dev-bin.sh
+export PATH="$PWD/target/dev-bin:$PATH"
+browser-use-terminal --version
 ```
 
-Notes: no sudo needed; binaries land in `~/.local/bin`
-(`browser`, `browser-use`, `browser-use-terminal`, `but`); state lives in
-`~/.browser-use-terminal`. Already installed? The same command updates it.
-Add the `export PATH` line to every later shell command in this session, or
-rely on the profile in new shells.
+These commands build the local source and create launchers in `target/dev-bin`.
+Rebuild this checkout to update it. State lives in `~/.browser-use-terminal`.
+The upstream installer distributes a different build that includes telemetry.
 
 ## 3. Register the skill with yourself
 
@@ -144,8 +145,6 @@ The essentials:
 - A background daemon holds the browser connection between your commands
   (auto-started). If it misbehaves: `browser-use-terminal browser daemon status`,
   `... daemon logs`, `... daemon stop` (next command restarts it and reattaches).
-- Slow first command in each shell: the launcher checks for updates; set
-  `BUT_AUTO_UPDATE=0` to skip.
 
 Full documentation: https://docs.browser-use.com/open-source/browser-use-terminal
-Source & issues: https://github.com/browser-use/terminal
+Private source: https://github.com/Cheggin/reagan-browser-use-terminal

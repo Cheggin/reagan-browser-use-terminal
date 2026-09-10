@@ -5,7 +5,7 @@ use browser_use_agent::{
 };
 use browser_use_protocol::{
     instruction_sources_from_events, startup_warnings_from_events, EventRecord, HistoryRow,
-    TelemetrySummary, WorkbenchState,
+    WorkbenchState,
 };
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
@@ -32,8 +32,8 @@ use super::{
     format_goal_tokens_compact, goal_command_hint, goal_status_label,
     pending_active_followup_events_from_events, pending_queued_followup_events_from_events, App,
     BrowserSelectRow, CookieSyncStatus, DefaultProfileStatus, DomainFocus, DomainMode,
-    FeedbackCategory, FeedbackStep, MessageActionKind, ModelSearchEntry, ProductState, SecretField,
-    SecretFocus, SetupResultKind, Surface,
+    MessageActionKind, ModelSearchEntry, ProductState, SecretField, SecretFocus, SetupResultKind,
+    Surface,
 };
 
 pub(crate) const APP_HORIZONTAL_MARGIN: u16 = 2;
@@ -257,10 +257,6 @@ pub(crate) fn render(frame: &mut Frame<'_>, app: &mut App) {
                     buffer: frame.buffer_mut().clone(),
                 });
             }
-        }
-        Surface::FeedbackThanks => {
-            app.modal_background = None;
-            render_feedback_thanks(frame, area, app);
         }
         surface => {
             app.modal_background = None;
@@ -866,7 +862,7 @@ fn surface_popup_overlay(
 }
 
 /// Centered floating popup overlay for slash-command-launched surfaces
-/// (history, browser, model, auth, telemetry, developer). Responsive: shrinks
+/// (history, browser, model, auth, developer). Responsive: shrinks
 /// to fit small terminals and caps to a comfortable max on large ones.
 fn surface_popup_rect(
     app: &App,
@@ -1029,7 +1025,6 @@ fn render_surface_popup_box(
         && (surface != Surface::ModelSearch || app.model_search_has_filter_input())
     {
         let masked = match surface {
-            Surface::Telemetry => masked_secret(app.composer.input()),
             Surface::ApiKey => {
                 let account = app.api_key_account.as_deref().unwrap_or("");
                 masked_secret_for_account(account, app.composer.input())
@@ -1484,7 +1479,6 @@ fn surface_heading(app: &App, surface: Surface) -> (String, &'static str) {
         Surface::SetupCloudSuccess => ("Setup".to_string(), "Browser Use Cloud connected"),
         Surface::Account => ("Authenticate".to_string(), "Sign in to a model provider"),
         Surface::ApiKey => ("API key".to_string(), "Enter your provider API key"),
-        Surface::Telemetry => ("Laminar".to_string(), "Configure Laminar telemetry"),
         Surface::Provider => (
             "Model".to_string(),
             "Pick a recommended model or choose a provider",
@@ -1535,8 +1529,6 @@ fn surface_heading(app: &App, surface: Surface) -> (String, &'static str) {
             "Email inbox".to_string(),
             "A disposable inbox the agent uses for sign-ups, links & codes",
         ),
-        Surface::Feedback => ("Feedback".to_string(), "Report a bug or share feedback"),
-        Surface::FeedbackThanks => ("Feedback".to_string(), ""),
         Surface::Main => ("".to_string(), ""),
     }
 }
@@ -1567,7 +1559,6 @@ fn surface_header_lines(app: &App, surface: Surface, width: u16) -> Vec<Line<'st
 fn surface_footer(surface: Surface) -> &'static str {
     match surface {
         Surface::ApiKey => "Enter:save | Esc:cancel",
-        Surface::Telemetry => "Enter:save | Esc:cancel",
         Surface::Email => "Enter:save | Esc:cancel",
         Surface::History => "Type to filter | Enter:open | Esc:close",
         Surface::Messages => "Enter:edit | Esc:close",
@@ -1581,8 +1572,6 @@ fn surface_footer(surface: Surface) -> &'static str {
         Surface::Developer => "Esc:close",
         Surface::Secrets => "Enter:next | Esc:close",
         Surface::Domains => "Enter:apply | Esc:close",
-        Surface::Feedback => "Enter:next | Esc:back",
-        Surface::FeedbackThanks => "",
         _ => "Enter:select | Esc:back",
     }
 }
@@ -1598,21 +1587,7 @@ fn messages_footer(app: &App) -> &'static str {
 fn surface_footer_for_app(surface: Surface, app: &App) -> &'static str {
     match surface {
         Surface::Messages => messages_footer(app),
-        Surface::Feedback => feedback_footer(app),
         _ => surface_footer(surface),
-    }
-}
-
-fn feedback_footer(app: &App) -> &'static str {
-    // The final step submits on Enter; earlier steps advance. On the home
-    // screen (no selected session) the description step is the last one.
-    let submits = matches!(app.feedback.step, FeedbackStep::UploadLogs)
-        || (matches!(app.feedback.step, FeedbackStep::Description)
-            && app.selected_session_id.is_none());
-    if submits {
-        "Enter:submit | Esc:back"
-    } else {
-        "Enter:next | Esc:back"
     }
 }
 
@@ -1631,7 +1606,6 @@ fn surface_lines(
         Surface::SetupCloudSuccess => setup_cloud_connected_lines(app),
         Surface::Account => account_lines(app),
         Surface::ApiKey => api_key_lines(app),
-        Surface::Telemetry => telemetry_key_lines(app),
         Surface::Provider => provider_lines(app),
         Surface::OpenAiAuth => openai_auth_lines(app),
         Surface::Model => model_lines(app, height),
@@ -1649,8 +1623,6 @@ fn surface_lines(
         Surface::Secrets => secrets_lines(app),
         Surface::Domains => domains_lines(app),
         Surface::Email => email_lines(app),
-        Surface::Feedback => feedback_lines(app),
-        Surface::FeedbackThanks => Vec::new(),
         Surface::Main => Vec::new(),
     }
 }
@@ -2208,8 +2180,6 @@ fn render_footer(
         "esc again to edit messages"
     } else if app.surface == Surface::Messages {
         messages_footer(app)
-    } else if app.surface == Surface::Feedback {
-        feedback_footer(app)
     } else if app.surface.is_bottom_pane() {
         surface_footer(app.surface)
     } else {
@@ -2799,59 +2769,6 @@ fn centered_line_in_width(text: &str, width: usize, style: Style) -> Line<'stati
     ])
 }
 
-const FEEDBACK_THANKS_FACE_FRAME_0: &str = r"\(•◡•)/";
-const FEEDBACK_THANKS_FACE_FRAME_1: &str = r"/(•◡•)\";
-const FEEDBACK_THANKS_MESSAGE: &str = "Thanks for the feedback!";
-const FEEDBACK_THANKS_HINT: &str = "press any key to continue";
-
-fn render_success_character(
-    frame: &mut Frame<'_>,
-    area: Rect,
-    started_at: Option<std::time::Instant>,
-    message: &str,
-    hint: &str,
-) {
-    frame.render_widget(Clear, frame.area());
-    let elapsed_ms = started_at
-        .map(|t| t.elapsed().as_millis() as u64)
-        .unwrap_or(0);
-    let frame_idx = (elapsed_ms / crate::FEEDBACK_THANKS_FRAME_MS) % 2;
-    let face = if frame_idx == 0 {
-        FEEDBACK_THANKS_FACE_FRAME_0
-    } else {
-        FEEDBACK_THANKS_FACE_FRAME_1
-    };
-    let w = area.width as usize;
-    let content_lines: Vec<Line<'static>> = vec![
-        centered_line(face, w, accent()),
-        Line::from(""),
-        centered_line(message, w, accent()),
-        Line::from(""),
-        centered_line(hint, w, muted()),
-    ];
-    let content_h = content_lines.len() as u16;
-    let top_pad = area.height.saturating_sub(content_h) / 2;
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(top_pad),
-            Constraint::Length(content_h),
-            Constraint::Min(0),
-        ])
-        .split(area);
-    frame.render_widget(Paragraph::new(content_lines), chunks[1]);
-}
-
-fn render_feedback_thanks(frame: &mut Frame<'_>, area: Rect, app: &App) {
-    render_success_character(
-        frame,
-        area,
-        app.feedback_thanks_started,
-        FEEDBACK_THANKS_MESSAGE,
-        FEEDBACK_THANKS_HINT,
-    );
-}
-
 fn line_width(line: &Line<'_>) -> usize {
     line.spans
         .iter()
@@ -2908,30 +2825,6 @@ fn api_key_lines(app: &App) -> Vec<Line<'static>> {
         )),
         Line::from(""),
     ]);
-    if let Some(notice) = app.status_notice.as_ref() {
-        lines.push(Line::from(Span::styled(
-            notice.clone(),
-            status_style("failed"),
-        )));
-        lines.push(Line::from(""));
-    }
-    lines.push(selected("Save key", 0, app.selected_row));
-    lines.push(selected("Cancel", 1, app.selected_row));
-    lines
-}
-
-fn telemetry_key_lines(app: &App) -> Vec<Line<'static>> {
-    let mut lines = vec![
-        Line::from(Span::styled("Laminar API key", bold())),
-        Line::from(""),
-        Line::from(format!("  {}", masked_secret(app.composer.input()))),
-        Line::from(""),
-        Line::from(Span::styled(
-            "  Stored locally and used by future agent runs.",
-            muted(),
-        )),
-        Line::from(""),
-    ];
     if let Some(notice) = app.status_notice.as_ref() {
         lines.push(Line::from(Span::styled(
             notice.clone(),
@@ -4390,23 +4283,9 @@ fn message_lines(app: &App, width: usize) -> Vec<Line<'static>> {
 
 fn developer_lines(app: &App, state: &WorkbenchState) -> Vec<Line<'static>> {
     let mut lines = vec![
-        Line::from(Span::styled("Laminar", bold())),
-        Line::from(""),
-        kv_line(
-            "status",
-            &app.laminar_status()
-                .unwrap_or_else(|_| "settings unavailable".to_string()),
-        ),
-    ];
-    if let Some(notice) = app.status_notice.as_ref() {
-        lines.push(Line::from(Span::styled(notice.clone(), muted())));
-    }
-    lines.push(selected("Configure Laminar", 0, app.selected_row));
-    lines.extend([
-        Line::from(""),
         Line::from(Span::styled("Current task", bold())),
         Line::from(""),
-    ]);
+    ];
     let Some(session) = state.current_session.as_ref() else {
         lines.push(Line::from(Span::styled("No task selected.", dim())));
         return lines;
@@ -4442,7 +4321,6 @@ fn developer_lines(app: &App, state: &WorkbenchState) -> Vec<Line<'static>> {
         }
         lines.push(Line::from(""));
     }
-    append_telemetry_detail_lines(&mut lines, &state.telemetry);
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled("Events", bold())));
     lines.push(Line::from(""));
@@ -4616,31 +4494,6 @@ fn selectable_row(text: &str, idx: usize, selected: usize, is_current: bool) -> 
         ),
         Span::styled(text.to_string(), body),
     ])
-}
-
-fn append_telemetry_detail_lines(lines: &mut Vec<Line<'static>>, telemetry: &TelemetrySummary) {
-    if telemetry.trace_id.is_none() && telemetry.failure.is_none() {
-        lines.push(Line::from(Span::styled(
-            "No Laminar event for this task.",
-            dim(),
-        )));
-        return;
-    }
-    if let Some(trace_id) = telemetry.trace_id.as_ref() {
-        lines.push(kv_line("trace", trace_id));
-    }
-    if let Some(backend) = telemetry.backend.as_ref() {
-        lines.push(kv_line("backend", backend));
-    }
-    if let Some(endpoint) = telemetry.endpoint.as_ref() {
-        lines.push(kv_line("endpoint", endpoint));
-    }
-    if let Some(error) = telemetry.failure.as_ref() {
-        lines.push(kv_line(
-            "status",
-            &format!("disabled: {}", truncate(&first_line(error), 120)),
-        ));
-    }
 }
 
 fn masked_secret(value: &str) -> String {
@@ -5259,101 +5112,6 @@ fn truncate(value: &str, max: usize) -> String {
     let mut out = value.chars().take(max - 3).collect::<String>();
     out.push_str("...");
     out
-}
-
-fn feedback_lines(app: &App) -> Vec<Line<'static>> {
-    let state = &app.feedback;
-    match state.step {
-        FeedbackStep::Category => {
-            let mut lines: Vec<Line<'static>> = Vec::new();
-            lines.push(Line::from(Span::styled(
-                "  Choose a category:",
-                text_style(),
-            )));
-            lines.push(Line::from(""));
-            for (i, cat) in FeedbackCategory::ALL.iter().enumerate() {
-                let number = format!("{}. ", i + 1);
-                let label = cat.label();
-                let desc = cat.description();
-                let is_selected = i == state.category_index;
-                let row_style = if is_selected { accent() } else { text_style() };
-                let prefix_style = if is_selected { accent() } else { muted() };
-                lines.push(Line::from(vec![
-                    Span::styled(format!("  {number}"), prefix_style),
-                    Span::styled(label.to_string(), row_style),
-                    Span::styled(format!(" — {desc}"), muted()),
-                ]));
-            }
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "  1-5 or ↑↓ to select, Enter to continue",
-                dim(),
-            )));
-            lines
-        }
-        FeedbackStep::Description => {
-            let category = FeedbackCategory::ALL
-                .get(state.category_index)
-                .copied()
-                .unwrap_or(FeedbackCategory::Other);
-            let label = format!("  Tell us more ({})", category.label());
-            let mut lines: Vec<Line<'static>> = Vec::new();
-            lines.push(Line::from(Span::styled(label, text_style())));
-            lines.push(Line::from(""));
-            let input = state.description.clone();
-            let display = if input.is_empty() {
-                Line::from(Span::styled("  (optional)", dim()))
-            } else {
-                Line::from(vec![
-                    Span::raw("  "),
-                    Span::styled(input, text_style()),
-                    Span::styled("█", accent()),
-                ])
-            };
-            lines.push(display);
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "  Type your message, Enter to continue, Esc to go back",
-                dim(),
-            )));
-            lines
-        }
-        FeedbackStep::UploadLogs => {
-            let mut lines: Vec<Line<'static>> = Vec::new();
-            lines.push(Line::from(Span::styled("  Upload logs?", text_style())));
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "  Shares this session's full transcript and tool activity",
-                muted(),
-            )));
-            lines.push(Line::from(Span::styled(
-                "  (plus app version, OS, model). It may contain page or file",
-                muted(),
-            )));
-            lines.push(Line::from(Span::styled(
-                "  contents \u{2014} skip if anything here is sensitive.",
-                muted(),
-            )));
-            lines.push(Line::from(""));
-            let (yes_style, no_style) = if state.upload_yes {
-                (accent(), muted())
-            } else {
-                (muted(), accent())
-            };
-            lines.push(Line::from(vec![
-                Span::raw("  "),
-                Span::styled("[ Yes ]", yes_style),
-                Span::raw("   "),
-                Span::styled("[ No ]", no_style),
-            ]));
-            lines.push(Line::from(""));
-            lines.push(Line::from(Span::styled(
-                "  ↑↓ or y/n to choose, Enter to submit, Esc to go back",
-                dim(),
-            )));
-            lines
-        }
-    }
 }
 
 fn first_line(value: &str) -> String {

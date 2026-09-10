@@ -30,11 +30,10 @@ use browser_use_agent::context::{
 use browser_use_agent::entrypoint::cleanup_unified_exec_manager_for_session_id;
 use browser_use_agent::entrypoint::RuntimeTurnDriver;
 use browser_use_agent::infra::{
-    capture_async, capture_blocking, install_process_crypto_provider,
-    record_browser_script_response_events, record_python_response_final_event,
-    record_python_worker_event, review_prompt_base_branch, review_prompt_commit,
-    review_prompt_custom, review_prompt_uncommitted_changes, start_review_session,
-    UnifiedExecShutdownCleanup,
+    install_process_crypto_provider, record_browser_script_response_events,
+    record_python_response_final_event, record_python_worker_event, review_prompt_base_branch,
+    review_prompt_commit, review_prompt_custom, review_prompt_uncommitted_changes,
+    start_review_session, UnifiedExecShutdownCleanup,
 };
 use browser_use_agent::live_executor::{
     ensure_agent_attached as ensure_runtime_agent_attached, RuntimeAgentExecutor,
@@ -87,22 +86,12 @@ use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-const MESSAGE_KIND_INITIAL: &str = "initial";
-const MESSAGE_KIND_FOLLOWUP: &str = "followup";
 const SDK_PROTOCOL_VERSION: u64 = 1;
-const APPROX_CHARS_PER_TOKEN: usize = 4;
 const DATASET_BROWSER_CLEANUP_TIMEOUT: Duration = Duration::from_secs(15);
 const SDK_EVENT_STRING_LIMIT_BYTES: usize = 1_000_000;
 const SDK_JSON_RPC_FRAME_LIMIT_BYTES: usize = 8 * 1024 * 1024;
 const SDK_HISTORY_EVENTS_HEAD_COUNT: usize = 20;
 const SDK_HISTORY_EVENTS_INITIAL_TAIL_COUNT: usize = 400;
-
-#[derive(Clone, Debug, Default)]
-struct MessageAnalytics {
-    provider_kind: Option<String>,
-    provider: Option<String>,
-    model: Option<String>,
-}
 
 fn should_color_stdout() -> bool {
     io::stdout().is_terminal() && std::env::var_os("NO_COLOR").is_none()
@@ -490,14 +479,6 @@ enum Command {
         targets: Vec<String>,
         #[arg(long, default_value_t = 30000)]
         timeout_ms: u64,
-    },
-    Update {
-        #[arg(long, default_value = "latest")]
-        release: String,
-        #[arg(long)]
-        check: bool,
-        #[arg(long)]
-        install_script: Option<String>,
     },
     DatasetList,
     DatasetSample {
@@ -918,11 +899,6 @@ fn main() -> Result<()> {
     }
     args.state_dir = resolve_state_dir(&args.state_dir);
     let store = Store::open(&args.state_dir)?;
-    capture_async(
-        &store,
-        "bu:cli command ran",
-        serde_json::json!({ "command": command_name(&args.command), "surface": "cli" }),
-    );
     let config_profile = args.config_profile.clone();
     let config_overrides = args.config_overrides.clone();
     let collaboration_mode = args.collaboration_mode.into();
@@ -1162,11 +1138,6 @@ fn main() -> Result<()> {
             targets,
             timeout_ms,
         } => wait_agent(&store, &target_id, targets, timeout_ms),
-        Command::Update {
-            release,
-            check,
-            install_script,
-        } => update(&store, release, check, install_script),
         Command::DatasetList => dataset_list(),
         Command::DatasetSample {
             dataset,
@@ -1350,68 +1321,6 @@ fn main() -> Result<()> {
     }
 }
 
-fn command_name(command: &Command) -> &'static str {
-    match command {
-        Command::Start { .. } => "start",
-        Command::Run { .. } => "run",
-        Command::RunFake { .. } => "run_fake",
-        Command::RunOpenai { .. } => "run_openai",
-        Command::RunBrowserUse { .. } => "run_browser_use",
-        Command::RunAnthropic { .. } => "run_anthropic",
-        Command::RunGoogle { .. } => "run_google",
-        Command::RunOpenrouter { .. } => "run_openrouter",
-        Command::RunDeepseek { .. } => "run_deepseek",
-        Command::RunCodex { .. } => "run_codex",
-        Command::RunCodexSession { .. } => "run_codex_session",
-        Command::RunOpenaiSession { .. } => "run_openai_session",
-        Command::RunBrowserUseSession { .. } => "run_browser_use_session",
-        Command::RunAnthropicSession { .. } => "run_anthropic_session",
-        Command::RunGoogleSession { .. } => "run_google_session",
-        Command::RunOpenrouterSession { .. } => "run_openrouter_session",
-        Command::RunDeepseekSession { .. } => "run_deepseek_session",
-        Command::Followup { .. } => "followup",
-        Command::Finish { .. } => "finish",
-        Command::Fail { .. } => "fail",
-        Command::Cancel { .. } => "cancel",
-        Command::Sessions { .. } => "sessions",
-        Command::History => "history",
-        Command::Show { .. } => "show",
-        Command::Events { .. } => "events",
-        Command::Python { .. } => "python",
-        Command::BrowserScript { .. } => "browser_script",
-        Command::Browser { .. } => "browser",
-        Command::BrowserDaemon => "browser_daemon",
-        Command::Skill { .. } => "skill",
-        Command::SyncCookies { .. } => "sync_cookies",
-        Command::UserShell { .. } => "user_shell",
-        Command::Review { .. } => "review",
-        Command::Export { .. } => "export",
-        Command::Import { .. } => "import",
-        Command::Config { .. } => "config",
-        Command::Auth { .. } => "auth",
-        Command::Secrets { .. } => "secrets",
-        Command::Domains { .. } => "domains",
-        Command::Diagnostics => "diagnostics",
-        Command::SdkServer { .. } => "sdk_server",
-        Command::Trace { .. } => "trace",
-        Command::SpawnAgent { .. } => "spawn_agent",
-        Command::ListAgents { .. } => "list_agents",
-        Command::CloseAgent { .. } => "close_agent",
-        Command::ResumeAgent { .. } => "resume_agent",
-        Command::SendAgentMessage { .. } => "send_agent_message",
-        Command::WaitAgent { .. } => "wait_agent",
-        Command::Update { .. } => "update",
-        Command::DatasetList => "dataset_list",
-        Command::DatasetSample { .. } => "dataset_sample",
-        Command::DatasetReport { .. } => "dataset_report",
-        Command::DatasetRunFake { .. } => "dataset_run_fake",
-        Command::DatasetRunOpenai { .. } => "dataset_run_openai",
-        Command::DatasetRunCodex { .. } => "dataset_run_codex",
-        Command::DatasetRunAnthropic { .. } => "dataset_run_anthropic",
-        Command::DatasetRunOpenrouter { .. } => "dataset_run_openrouter",
-    }
-}
-
 fn load_dotenv() -> Result<()> {
     let path = Path::new(".env");
     if !path.exists() {
@@ -1450,170 +1359,6 @@ fn unquote_env_value(value: &str) -> String {
     }
 }
 
-const DEFAULT_RELEASE_REPO: &str = "browser-use/terminal";
-const INSTALL_SCRIPT_BRANCH: &str = "main";
-
-fn update(
-    store: &Store,
-    release: String,
-    check: bool,
-    install_script: Option<String>,
-) -> Result<()> {
-    if check {
-        let latest = if release == "latest" {
-            latest_release_version()?
-        } else {
-            normalize_release_version(&release)
-        };
-        let current = env!("CARGO_PKG_VERSION");
-        let update_status = if latest == current {
-            "up_to_date"
-        } else {
-            "available"
-        };
-        capture_blocking(
-            store,
-            "bu:cli update checked",
-            serde_json::json!({
-                "surface": "cli",
-                "status": update_status,
-                "release": release.as_str(),
-            }),
-        );
-        if latest == current {
-            println!("browser-use terminal is up to date ({current}).");
-        } else {
-            println!("browser-use terminal update available: {current} -> {latest}");
-            println!("Run `browser-use-terminal update` to install it.");
-        }
-        return Ok(());
-    }
-
-    let script = resolve_install_script(install_script)?;
-    capture_blocking(
-        store,
-        "bu:cli update started",
-        serde_json::json!({ "surface": "cli", "release": release.as_str() }),
-    );
-    let status = std::process::Command::new("sh")
-        .arg(&script)
-        .arg("--release")
-        .arg(&release)
-        .arg("--no-launch")
-        .status()
-        .with_context(|| format!("run installer script {}", script.display()))?;
-    if !status.success() {
-        capture_blocking(
-            store,
-            "bu:cli update failed",
-            serde_json::json!({ "surface": "cli", "release": release.as_str() }),
-        );
-        bail!("installer exited with status {status}");
-    }
-    capture_blocking(
-        store,
-        "bu:cli update completed",
-        serde_json::json!({ "surface": "cli", "release": release.as_str() }),
-    );
-    Ok(())
-}
-
-fn latest_release_version() -> Result<String> {
-    let repo = release_repo();
-    let url = format!("https://github.com/{repo}/releases/latest");
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .context("build GitHub release client")?;
-    let response = client
-        .get(url)
-        .header("User-Agent", "browser-use-terminal-updater")
-        .send()
-        .context("fetch latest GitHub release")?
-        .error_for_status()
-        .context("latest GitHub release returned an error")?;
-    let final_url = response.url().clone();
-    let segments = final_url
-        .path_segments()
-        .context("latest GitHub release URL has no path")?
-        .collect::<Vec<_>>();
-    let tag = segments
-        .windows(3)
-        .find_map(|window| {
-            if window[0] == "releases" && window[1] == "tag" {
-                Some(window[2])
-            } else {
-                None
-            }
-        })
-        .context("latest GitHub release redirect missing tag")?;
-    Ok(normalize_release_version(tag))
-}
-
-fn normalize_release_version(raw: &str) -> String {
-    raw.trim()
-        .strip_prefix("browser-use-terminal-v")
-        .or_else(|| raw.trim().strip_prefix('v'))
-        .unwrap_or(raw.trim())
-        .to_string()
-}
-
-fn release_repo() -> String {
-    std::env::var("BUT_RELEASE_REPO")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| DEFAULT_RELEASE_REPO.to_string())
-}
-
-fn resolve_install_script(explicit: Option<String>) -> Result<PathBuf> {
-    let source = explicit
-        .or_else(|| std::env::var("BUT_INSTALL_SCRIPT").ok())
-        .filter(|value| !value.trim().is_empty());
-    match source {
-        Some(source) if source.starts_with("https://") || source.starts_with("http://") => {
-            download_install_script(&source)
-        }
-        Some(source) => Ok(PathBuf::from(source)),
-        None => {
-            let local_script = Path::new(env!("CARGO_MANIFEST_DIR"))
-                .parent()
-                .and_then(Path::parent)
-                .map(|root| root.join("scripts/install/install.sh"))
-                .filter(|path| path.is_file());
-            if let Some(path) = local_script {
-                return Ok(path);
-            }
-            let repo = release_repo();
-            let url = format!(
-                "https://raw.githubusercontent.com/{repo}/{INSTALL_SCRIPT_BRANCH}/scripts/install/install.sh"
-            );
-            download_install_script(&url)
-        }
-    }
-}
-
-fn download_install_script(url: &str) -> Result<PathBuf> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .context("build installer download client")?;
-    let script = client
-        .get(url)
-        .header("User-Agent", "browser-use-terminal-updater")
-        .send()
-        .with_context(|| format!("download installer script from {url}"))?
-        .error_for_status()
-        .with_context(|| format!("installer script request failed for {url}"))?
-        .text()
-        .with_context(|| format!("read installer script from {url}"))?;
-    let path = std::env::temp_dir().join(format!(
-        "browser-use-terminal-update-{}-install.sh",
-        std::process::id()
-    ));
-    fs::write(&path, script).context("write temporary installer script")?;
-    Ok(path)
-}
-
 fn sessions(store: &Store, command: SessionsCommand) -> Result<()> {
     match command {
         SessionsCommand::List => history(store),
@@ -1632,22 +1377,11 @@ fn sessions(store: &Store, command: SessionsCommand) -> Result<()> {
 fn start(store: &Store, text: String) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let task = store.create_session(None, &cwd)?;
-    let input_record = store.append_event(
+    store.append_event(
         &task.id,
         "session.input",
         typed_user_input_payload_from_text_for_cwd(&text, &cwd)?,
     )?;
-    let analytics = MessageAnalytics::default();
-    capture_user_message(
-        store,
-        "cli",
-        &task.id,
-        task.parent_id.is_some(),
-        MESSAGE_KIND_INITIAL,
-        input_record.seq,
-        &text,
-        analytics,
-    );
     maybe_append_message_history(&task.id, &text, &cwd, &AgentRunOptions::default());
     println!("{}", task.id);
     Ok(())
@@ -1660,22 +1394,11 @@ fn run_new_session_from_config(
 ) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let session = store.create_session(None, &cwd)?;
-    let input_record = store.append_event(
+    store.append_event(
         &session.id,
         "session.input",
         typed_user_input_payload_from_text_for_cwd(&text, &cwd)?,
     )?;
-    let analytics = message_analytics_for_config(&config);
-    capture_user_message(
-        store,
-        "cli",
-        &session.id,
-        session.parent_id.is_some(),
-        MESSAGE_KIND_INITIAL,
-        input_record.seq,
-        &text,
-        analytics,
-    );
     maybe_append_message_history(&session.id, &text, &cwd, &config.options);
     let session_id = run_session_via_engine(store, &session.id, config)?;
     println!("{session_id}");
@@ -2212,24 +1935,13 @@ fn child_request_fork_mode(raw: Option<&str>) -> Result<ForkMode> {
 fn run_fake(store: &Store, text: String, python_code: Option<String>) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let session = store.create_session(None, &cwd)?;
-    let input_record = store.append_event(
+    store.append_event(
         &session.id,
         "session.input",
         typed_user_input_payload_from_text_for_cwd(&text, &cwd)?,
     )?;
     let config = ProviderRunConfig::new(ProviderBackend::Fake, "fake")
         .with_fake_result(fake_agent_result_text(&text, python_code.as_deref()));
-    let analytics = message_analytics_for_config(&config);
-    capture_user_message(
-        store,
-        "cli",
-        &session.id,
-        session.parent_id.is_some(),
-        MESSAGE_KIND_INITIAL,
-        input_record.seq,
-        &text,
-        analytics,
-    );
     let session_id = run_session_via_engine(store, &session.id, config)?;
     println!("{session_id}");
     Ok(())
@@ -2259,8 +1971,7 @@ fn cli_agent_options(
     let mut options = AgentRunOptions::default()
         .with_collaboration_mode(collaboration_mode)
         .with_browser_mode(cli_browser_mode())
-        .with_model_compaction(true)
-        .with_analytics_source("cli");
+        .with_model_compaction(true);
     if let Some(profile) = config_profile {
         options = options.with_config_profile(profile.to_string());
     }
@@ -3098,150 +2809,9 @@ fn child_run_was_interrupted_from_events(events: &[browser_use_protocol::EventRe
     session_was_interrupted(events)
 }
 
-fn message_analytics_for_config(config: &ProviderRunConfig) -> MessageAnalytics {
-    MessageAnalytics {
-        provider_kind: Some(analytics_provider_kind_for_backend(config.backend).to_string()),
-        provider: Some(provider_id_for_backend(config.backend).to_string()),
-        model: Some(config.model.clone()),
-    }
-}
-
-fn analytics_provider_kind_for_backend(backend: ProviderBackend) -> &'static str {
-    match backend {
-        ProviderBackend::Codex => "subscription",
-        ProviderBackend::Openai
-        | ProviderBackend::Anthropic
-        | ProviderBackend::Google
-        | ProviderBackend::Openrouter
-        | ProviderBackend::Deepseek
-        | ProviderBackend::BrowserUse => "api_key",
-        ProviderBackend::Fake | ProviderBackend::None => "other",
-    }
-}
-
-fn provider_id_for_backend(backend: ProviderBackend) -> &'static str {
-    match backend {
-        ProviderBackend::Codex => "codex",
-        ProviderBackend::Openai => "openai",
-        ProviderBackend::Anthropic => "anthropic",
-        ProviderBackend::Google => "google",
-        ProviderBackend::Openrouter => "openrouter",
-        ProviderBackend::Deepseek => "deepseek",
-        ProviderBackend::BrowserUse => "browser-use",
-        ProviderBackend::Fake => "fake",
-        ProviderBackend::None => "none",
-    }
-}
-
-fn append_message_analytics(properties: &mut serde_json::Value, analytics: MessageAnalytics) {
-    let Some(object) = properties.as_object_mut() else {
-        return;
-    };
-    for (key, value) in [
-        ("provider_kind", analytics.provider_kind),
-        ("provider", analytics.provider),
-    ] {
-        if let Some(value) = value
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
-        {
-            object.insert(key.to_string(), serde_json::Value::String(value));
-        }
-    }
-    if let Some(raw_model) = analytics
-        .model
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-    {
-        let simple_model = simple_model_id(&raw_model);
-        object.insert(
-            "model".to_string(),
-            serde_json::Value::String(simple_model.clone()),
-        );
-        if simple_model != raw_model {
-            object.insert(
-                "provider_model".to_string(),
-                serde_json::Value::String(raw_model),
-            );
-        }
-    }
-}
-
-fn append_user_text_analytics(properties: &mut serde_json::Value, text: &str) {
-    let Some(object) = properties.as_object_mut() else {
-        return;
-    };
-    let trimmed = text.trim();
-    let char_count = trimmed.chars().count();
-    let word_count = if trimmed.is_empty() {
-        0
-    } else {
-        trimmed.split_whitespace().count()
-    };
-    let approx_tokens = char_count.div_ceil(APPROX_CHARS_PER_TOKEN);
-    object.insert(
-        "text".to_string(),
-        serde_json::Value::String(text.to_string()),
-    );
-    object.insert(
-        "text_chars".to_string(),
-        serde_json::json!(text.chars().count()),
-    );
-    object.insert("char_count".to_string(), serde_json::json!(char_count));
-    object.insert("word_count".to_string(), serde_json::json!(word_count));
-    object.insert(
-        "approx_tokens".to_string(),
-        serde_json::json!(approx_tokens),
-    );
-}
-
-fn simple_model_id(model: &str) -> String {
-    model
-        .trim()
-        .rsplit('/')
-        .next()
-        .unwrap_or(model)
-        .trim()
-        .replace('_', "-")
-        .to_ascii_lowercase()
-}
-
-#[allow(clippy::too_many_arguments)]
-fn capture_user_message(
-    store: &Store,
-    surface: &str,
-    session_id: &str,
-    is_subagent: bool,
-    kind: &str,
-    seq: i64,
-    text: &str,
-    analytics: MessageAnalytics,
-) {
-    let mut properties = serde_json::json!({
-        "surface": surface,
-        "session_id": session_id,
-        "is_subagent": is_subagent,
-        "kind": kind,
-        "seq": seq,
-    });
-    append_user_text_analytics(&mut properties, text);
-    append_message_analytics(&mut properties, analytics);
-    capture_async(store, "bu:tui user_message", properties);
-}
-
 fn followup(store: &Store, task_id: &str, text: String) -> Result<()> {
     let session = ensure_task_exists(store, task_id)?;
-    if let Some(seq) = followup_via_live_runtime(store, &session, &text)? {
-        capture_user_message(
-            store,
-            "cli",
-            task_id,
-            session.parent_id.is_some(),
-            MESSAGE_KIND_FOLLOWUP,
-            seq,
-            &text,
-            MessageAnalytics::default(),
-        );
+    if followup_via_live_runtime(store, &session, &text)?.is_some() {
         maybe_append_message_history(
             task_id,
             &text,
@@ -3251,21 +2821,11 @@ fn followup(store: &Store, task_id: &str, text: String) -> Result<()> {
         println!("followup {task_id}");
         return Ok(());
     }
-    let followup_record = store.append_event(
+    store.append_event(
         task_id,
         "session.followup",
         typed_user_input_payload_from_text_for_cwd(&text, &session.cwd)?,
     )?;
-    capture_user_message(
-        store,
-        "cli",
-        task_id,
-        session.parent_id.is_some(),
-        MESSAGE_KIND_FOLLOWUP,
-        followup_record.seq,
-        &text,
-        MessageAnalytics::default(),
-    );
     maybe_append_message_history(
         task_id,
         &text,
@@ -3453,15 +3013,13 @@ fn python(store: &Store, task_id: &str, code: String) -> Result<()> {
             "arguments": { "code": code.clone() },
         }),
     )?;
-    let browser_mode = cli_browser_mode();
     let agent_workspace = store
         .state_dir()
         .join("agent-workspace")
         .display()
         .to_string();
     let worker_env = [("BH_AGENT_WORKSPACE", agent_workspace.as_str())];
-    let mut worker =
-        PythonWorker::start_with_browser_mode_and_env(Some(&browser_mode), worker_env)?;
+    let mut worker = PythonWorker::start_with_env(worker_env)?;
     let mut stream_error = None;
     let response =
         worker.run_with_events(task_id, &task.cwd, &task.artifact_root, &code, |event| {
@@ -6198,21 +5756,15 @@ fn diagnostics(store: &Store) -> Result<()> {
         "__diagnostics__",
         std::env::current_dir()?,
         artifact_dir,
-        "result = {'browser_harness_available': browser_harness_available, 'browser_harness_error': browser_harness_error}",
+        "result = 1 + 1",
     )?;
-    println!(
-        "browser_harness: {}",
-        if response.browser_harness_available {
-            "available"
-        } else {
-            "not available"
-        }
-    );
-    if let Some(error) = response.browser_harness_error {
-        if !error.trim().is_empty() {
-            println!("browser_harness_error: {error}");
-        }
+    if !response.ok || response.data != json!(2) {
+        bail!(
+            "Python worker check failed: {}",
+            response.error.unwrap_or(response.text)
+        );
     }
+    println!("python_worker: available");
     Ok(())
 }
 
@@ -7079,8 +6631,7 @@ fn sdk_runtime_python_worker_ping(context: &SdkServerContext) -> Result<Value> {
         .join("python-worker-ping");
     fs::create_dir_all(&artifact_dir)?;
     let cwd = std::env::current_dir()?;
-    let mut worker =
-        PythonWorker::start_with_browser_mode_and_env(None, std::iter::empty::<(&str, &str)>())?;
+    let mut worker = PythonWorker::start()?;
     let response = worker.run(
         "sdk-python-worker-ping",
         cwd,
@@ -7970,10 +7521,7 @@ fn sdk_provider_run_config(
     let mut options = AgentRunOptions::default()
         .with_browser_mode(browser_mode)
         .with_model_compaction(true)
-        .with_analytics_source("sdk")
         .with_model_provider_id(provider_id.clone());
-    options.analytics_provider_kind = Some(provider_id);
-    options.analytics_model = Some(model.to_string());
     if let Some(max_steps) = params
         .get("max_steps")
         .and_then(Value::as_u64)
@@ -9475,9 +9023,6 @@ fn run_dataset_case_with_provider<R: DatasetRunner>(
         model_auto_compact_token_limit: None,
         model_auto_compact_token_limit_scope: AgentRunOptions::default()
             .model_auto_compact_token_limit_scope,
-        analytics_source: Some("cli".to_string()),
-        analytics_provider_kind: Some(config.provider.clone()),
-        analytics_model: Some(config.model.clone()),
         full_llm_input_events: false,
         // Provider-level runtime options are merged by ConfigDatasetRunner; this
         // per-case layer carries dataset-specific browser/python limits.
@@ -10641,18 +10186,6 @@ command = "test-mcp"
     }
 
     #[test]
-    fn appends_user_text_analytics_with_raw_text() {
-        let mut properties = serde_json::json!({"surface": "cli"});
-        append_user_text_analytics(&mut properties, "  open example.com  ");
-
-        assert_eq!(properties["text"], "  open example.com  ");
-        assert_eq!(properties["text_chars"], 20);
-        assert_eq!(properties["char_count"], 16);
-        assert_eq!(properties["word_count"], 2);
-        assert_eq!(properties["approx_tokens"], 4);
-    }
-
-    #[test]
     fn cli_completion_handler_skips_interrupted_child_runs() {
         let interrupted_events = vec![browser_use_protocol::EventRecord {
             seq: 1,
@@ -10826,7 +10359,6 @@ command = "test-mcp"
             Command::RunCodexSession { task_id, model } => {
                 assert_eq!(task_id, "session-123");
                 assert_eq!(model, "gpt-test");
-                assert_eq!(command_name(&parsed.command), "run_codex_session");
             }
             other => panic!("expected run-codex-session command, got {other:?}"),
         }
@@ -13100,7 +12632,6 @@ command = "test-mcp"
     }
 
     fn unique_cli_test_dir(name: &str) -> Result<std::path::PathBuf> {
-        std::env::set_var("BUT_PRODUCT_ANALYTICS", "false");
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_nanos();

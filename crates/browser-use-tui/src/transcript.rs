@@ -33,8 +33,7 @@ const SHELL_GROUP_VISIBLE_VALUES: usize = 2;
 const ACTIVE_FALLBACK_STATUS: &str = "running browser task";
 const LIVE_STREAM_QUIET_STATUS_DELAY_MS: i64 = 500;
 const SESSION_PAUSED_TITLE: &str = "Conversation paused";
-const SESSION_PAUSED_TEXT: &str =
-    "What should the model do differently? If something went wrong, please use /feedback :)";
+const SESSION_PAUSED_TEXT: &str = "What should the model do differently?";
 /// Mirror of the agent crate's `pub(crate)` rollback event type. Used only to
 /// decide whether the rollback-filtered event buffer can be extended in place
 /// (append-only, no rollback) or must be rebuilt from scratch.
@@ -1680,8 +1679,6 @@ fn committed_node_for_event(
         | "session.cancel_requested"
         | "agent.context"
         | "agent.updated"
-        | "telemetry.trace"
-        | "telemetry.failed"
         | "command.cleaned_up" => None,
         _ => None,
     }
@@ -8256,7 +8253,6 @@ mod tests {
                 tabs: None,
                 viewport: None,
             },
-            telemetry: browser_use_protocol::TelemetrySummary::default(),
             history: Vec::new(),
         };
 

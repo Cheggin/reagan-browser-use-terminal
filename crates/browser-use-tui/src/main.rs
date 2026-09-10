@@ -101,7 +101,6 @@ mod clipboard_paste;
 mod composer;
 mod markdown;
 mod palette;
-mod product_analytics;
 mod render;
 mod runtime;
 mod settings;
@@ -172,8 +171,6 @@ const SECRETS_VISIBLE_ROWS: usize = 6;
 
 const ANIM_TICK_INTERVAL: Duration = Duration::from_millis(16); // ~60 fps
 const LIVE_SPINNER_TICK_INTERVAL: Duration = Duration::from_millis(120);
-pub(crate) const FEEDBACK_THANKS_FRAME_MS: u64 = 250;
-const FEEDBACK_THANKS_AUTO_DISMISS: Duration = Duration::from_millis(2500);
 const REEXEC_BINARY_ENV: &str = "BUT_REEXEC_BINARY";
 const REEXEC_SESSION_ENV: &str = "BUT_REEXEC_SESSION_ID";
 const BROWSER_USE_CLOUD_API_KEY_ID_SETTING: &str = "auth.browser_use_cloud.api_key_id";
@@ -277,7 +274,6 @@ enum Surface {
     SetupCloudSuccess,
     Account,
     ApiKey,
-    Telemetry,
     Provider,
     OpenAiAuth,
     Model,
@@ -295,8 +291,6 @@ enum Surface {
     Secrets,
     Domains,
     Email,
-    Feedback,
-    FeedbackThanks,
 }
 
 impl Surface {
@@ -305,7 +299,6 @@ impl Surface {
             self,
             Self::Account
                 | Self::ApiKey
-                | Self::Telemetry
                 | Self::Provider
                 | Self::OpenAiAuth
                 | Self::Model
@@ -323,7 +316,6 @@ impl Surface {
                 | Self::Secrets
                 | Self::Domains
                 | Self::Email
-                | Self::Feedback
         )
     }
 
@@ -339,12 +331,7 @@ impl Surface {
     fn is_text_input_popup(self) -> bool {
         matches!(
             self,
-            Self::ApiKey
-                | Self::Telemetry
-                | Self::ModelSearch
-                | Self::Secrets
-                | Self::Domains
-                | Self::Email
+            Self::ApiKey | Self::ModelSearch | Self::Secrets | Self::Domains | Self::Email
         )
     }
 
@@ -385,7 +372,6 @@ struct ProviderAuthRow {
 enum ScreenArg {
     Setup,
     Account,
-    Telemetry,
     Model,
     Mode,
     Browser,
@@ -399,7 +385,6 @@ impl From<ScreenArg> for Surface {
         match value {
             ScreenArg::Setup => Self::Setup,
             ScreenArg::Account => Self::Account,
-            ScreenArg::Telemetry => Self::Telemetry,
             ScreenArg::Model => Self::Model,
             ScreenArg::Mode => Self::Mode,
             ScreenArg::Browser => Self::Browser,
@@ -624,103 +609,6 @@ pub(crate) enum BrowserSelectRow {
     Cloud,
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Feedback questionnaire state
-
-const FEEDBACK_INGEST_URL: &str = "https://feedback-ingest-production.up.railway.app";
-const FEEDBACK_INSTALL_ID_SETTING: &str = "install.id";
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FeedbackStep {
-    Category,
-    Description,
-    UploadLogs,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum FeedbackCategory {
-    Bug,
-    BadResult,
-    GoodResult,
-    SafetyCheck,
-    Other,
-}
-
-impl FeedbackCategory {
-    const ALL: [FeedbackCategory; 5] = [
-        FeedbackCategory::Bug,
-        FeedbackCategory::BadResult,
-        FeedbackCategory::GoodResult,
-        FeedbackCategory::SafetyCheck,
-        FeedbackCategory::Other,
-    ];
-
-    fn label(self) -> &'static str {
-        match self {
-            FeedbackCategory::Bug => "bug",
-            FeedbackCategory::BadResult => "bad result",
-            FeedbackCategory::GoodResult => "good result",
-            FeedbackCategory::SafetyCheck => "safety check",
-            FeedbackCategory::Other => "other",
-        }
-    }
-
-    fn description(self) -> &'static str {
-        match self {
-            FeedbackCategory::Bug => "Crash, error message, hang, or broken UI/behavior.",
-            FeedbackCategory::BadResult => {
-                "Output was off-target, incorrect, incomplete, or unhelpful."
-            }
-            FeedbackCategory::GoodResult => {
-                "Helpful, correct, high-quality, or delightful result worth celebrating."
-            }
-            FeedbackCategory::SafetyCheck => {
-                "Benign usage blocked due to safety checks or refusals."
-            }
-            FeedbackCategory::Other => {
-                "Slowness, feature suggestion, UX feedback, or anything else."
-            }
-        }
-    }
-
-    fn api_value(self) -> &'static str {
-        match self {
-            FeedbackCategory::Bug => "bug",
-            FeedbackCategory::BadResult => "bad_result",
-            FeedbackCategory::GoodResult => "good_result",
-            FeedbackCategory::SafetyCheck => "safety_check",
-            FeedbackCategory::Other => "other",
-        }
-    }
-}
-
-#[derive(Debug)]
-struct FeedbackState {
-    step: FeedbackStep,
-    category_index: usize,
-    description: String,
-    upload_yes: bool,
-}
-
-impl Default for FeedbackState {
-    fn default() -> Self {
-        Self {
-            step: FeedbackStep::Category,
-            category_index: 0,
-            description: String::new(),
-            upload_yes: true,
-        }
-    }
-}
-
-#[derive(Debug)]
-enum FeedbackSubmitResult {
-    Ok,
-    Err(String),
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum AppCommand {
     StartTask(String),
@@ -746,12 +634,10 @@ enum AppCommand {
     ChangeModel,
     SetCollaborationMode(CollaborationModeKind),
     SignIn,
-    ConfigureTelemetry,
     ChangeBrowser,
     ChangeDefaultProfile,
     SyncCookies,
     Reload,
-    Update,
     SaveAccount(String),
     SelectRecommended(usize),
     OpenModelSearch,
@@ -759,8 +645,6 @@ enum AppCommand {
     SaveBrowser(usize),
     SaveDefaultProfile(usize),
     SaveAuth(String),
-    SaveTelemetry(String),
-    OpenFeedback,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1476,9 +1360,6 @@ struct App {
     pending_auth_resume: Option<String>,
     pending_initial_goal: Option<String>,
     pending_goal_replacement: Option<PendingGoalReplacement>,
-    feedback: FeedbackState,
-    feedback_rx: Option<tokio::sync::mpsc::Receiver<FeedbackSubmitResult>>,
-    feedback_thanks_started: Option<Instant>,
 }
 
 #[derive(Clone)]
@@ -1827,7 +1708,6 @@ fn empty_workbench_state(browser: &str) -> WorkbenchState {
             status: "not connected".to_string(),
             ..Default::default()
         },
-        telemetry: Default::default(),
         history: Vec::new(),
     }
 }
@@ -2556,9 +2436,6 @@ impl App {
             pending_auth_resume: None,
             pending_initial_goal: None,
             pending_goal_replacement: None,
-            feedback: FeedbackState::default(),
-            feedback_rx: None,
-            feedback_thanks_started: None,
         };
         if let Some(session_id) = app.selected_session_id.clone() {
             app.apply_session_settings_to_app(&session_id)?;
@@ -2589,7 +2466,6 @@ impl App {
             activity: Vec::new(),
             transcript: Vec::new(),
             browser: state.browser.clone(),
-            telemetry: state.telemetry.clone(),
             history: state.history.clone(),
         }
     }
@@ -2605,7 +2481,6 @@ impl App {
             activity: Vec::new(),
             transcript: state.transcript.last().cloned().into_iter().collect(),
             browser: state.browser.clone(),
-            telemetry: state.telemetry.clone(),
             history: Vec::new(),
         }
     }
@@ -2769,12 +2644,6 @@ impl App {
                     authorization,
                     browser_open_error,
                 } => {
-                    self.track_onboarding_event(
-                        "bu:tui onboarding cloud auth browser opened",
-                        serde_json::json!({
-                            "browser_open_error": browser_open_error.is_some(),
-                        }),
-                    );
                     if let Some(flow) = self.browser_use_cloud_login.as_mut() {
                         flow.authorization = Some(authorization);
                         flow.browser_open_error = browser_open_error;
@@ -2792,12 +2661,6 @@ impl App {
                             self.complete_browser_use_cloud_device_auth(&credential)?;
                         }
                         Err(error) => {
-                            self.track_onboarding_event(
-                                "bu:tui onboarding cloud auth failed",
-                                serde_json::json!({
-                                    "failure_kind": "authorization_failed",
-                                }),
-                            );
                             self.show_setup_result(
                                 SetupResultKind::Failure,
                                 account,
@@ -2925,12 +2788,6 @@ impl App {
                             self.cookie_sync.status = CookieSyncStatus::Failed(format!(
                                 "Cookie sync completed, but the Cloud profile could not be saved: {error:#}"
                             ));
-                            self.track_onboarding_event(
-                                "bu:tui cookie sync failed",
-                                serde_json::json!({
-                                    "failure_kind": "profile_save_failed",
-                                }),
-                            );
                             return;
                         }
                     }
@@ -2938,47 +2795,9 @@ impl App {
                         cookie_sync_result_status(&value).unwrap_or_else(|| {
                             CookieSyncStatus::Failed("Unexpected cookie sync response.".to_string())
                         });
-                    match &self.cookie_sync.status {
-                        CookieSyncStatus::Completed(_) => {
-                            self.track_onboarding_event(
-                                "bu:tui cookie sync completed",
-                                cookie_sync_result_analytics(&value),
-                            );
-                        }
-                        CookieSyncStatus::NeedsAuth => {
-                            self.track_onboarding_event(
-                                "bu:tui cookie sync failed",
-                                serde_json::json!({
-                                    "failure_kind": "needs_auth",
-                                    "reported_status": "needs-auth",
-                                }),
-                            );
-                        }
-                        CookieSyncStatus::Failed(_) => {
-                            self.track_onboarding_event(
-                                "bu:tui cookie sync failed",
-                                serde_json::json!({
-                                    "failure_kind": "failed_status",
-                                    "reported_status": value
-                                        .get("status")
-                                        .and_then(serde_json::Value::as_str)
-                                        .unwrap_or("unknown"),
-                                }),
-                            );
-                        }
-                        CookieSyncStatus::LoadingProfiles
-                        | CookieSyncStatus::Ready
-                        | CookieSyncStatus::Syncing => {}
-                    }
                 }
             },
             Err(error) => {
-                self.track_onboarding_event(
-                    "bu:tui cookie sync failed",
-                    serde_json::json!({
-                        "failure_kind": cookie_sync_error_kind(&error),
-                    }),
-                );
                 self.cookie_sync.status = CookieSyncStatus::Failed(error);
             }
         }
@@ -2989,27 +2808,10 @@ impl App {
             Some("needs-auth") => {
                 self.cookie_sync.status = CookieSyncStatus::NeedsAuth;
                 self.cookie_sync.profiles.clear();
-                self.track_onboarding_event(
-                    "bu:tui cookie sync profile load failed",
-                    serde_json::json!({
-                        "failure_kind": "needs_auth",
-                        "reported_status": "needs-auth",
-                    }),
-                );
             }
             Some("needs-user-action") | Some("ok") => {
                 self.cookie_sync.profiles = cookie_sync_profiles_from_value(&value);
                 self.cookie_sync.status = CookieSyncStatus::Ready;
-                self.track_onboarding_event(
-                    "bu:tui cookie sync profile load completed",
-                    serde_json::json!({
-                        "profiles_count": self.cookie_sync.profiles.len(),
-                        "reported_status": value
-                            .get("status")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("ok"),
-                    }),
-                );
             }
             Some("failed") => {
                 let error = value
@@ -3018,27 +2820,10 @@ impl App {
                     .unwrap_or("Cookie sync profile scan failed")
                     .to_string();
                 self.cookie_sync.status = CookieSyncStatus::Failed(error);
-                self.track_onboarding_event(
-                    "bu:tui cookie sync profile load failed",
-                    serde_json::json!({
-                        "failure_kind": "failed_status",
-                        "reported_status": "failed",
-                    }),
-                );
             }
             _ => {
                 self.cookie_sync.status =
                     CookieSyncStatus::Failed("Unexpected cookie sync response.".to_string());
-                self.track_onboarding_event(
-                    "bu:tui cookie sync profile load failed",
-                    serde_json::json!({
-                        "failure_kind": "unexpected_response",
-                        "reported_status": value
-                            .get("status")
-                            .and_then(serde_json::Value::as_str)
-                            .unwrap_or("missing"),
-                    }),
-                );
             }
         }
     }
@@ -4737,23 +4522,11 @@ impl App {
         self.append_session_model_selection(&session.id, &selection)?;
         self.append_current_session_runtime_settings(&session.id)?;
         // Record the user's task as the standard input event (preserved for retry).
-        let input_record = self.store.append_event(
+        self.store.append_event(
             &session.id,
             "session.input",
             typed_user_input_payload_for_submission_for_cwd(&submission, &cwd)?,
         )?;
-        // The agent does not run yet (no key); tag this message so blocked,
-        // pre-auth submissions are queryable separately from real runs.
-        product_analytics::capture_user_message_blocked(
-            &self.store,
-            "tui",
-            &session.id,
-            session.parent_id.is_some(),
-            input_record.seq,
-            &submission.text,
-            product_analytics::BLOCKED_REASON_NO_AUTH,
-            analytics_model_for_selection(&selection),
-        );
         // Inject the nudge as a non-terminal assistant-style message so the
         // transcript renders it without marking the session completed/done.
         // session.notice is NOT listed in has_terminal_session_event, so the
@@ -4902,12 +4675,10 @@ impl App {
                 self.selected_provider = None;
                 self.open_surface(Surface::Account);
             }
-            AppCommand::ConfigureTelemetry => self.start_telemetry_entry(),
             AppCommand::ChangeBrowser => self.open_browser_select()?,
             AppCommand::ChangeDefaultProfile => self.open_default_profile()?,
             AppCommand::SyncCookies => self.open_cookie_sync()?,
             AppCommand::Reload => self.request_reexec()?,
-            AppCommand::Update => self.run_update()?,
             AppCommand::SaveAccount(account) => self.save_account(account)?,
             AppCommand::SelectRecommended(index) => self.select_recommended(index)?,
             AppCommand::OpenModelSearch => self.open_model_search()?,
@@ -4915,12 +4686,6 @@ impl App {
             AppCommand::SaveBrowser(index) => self.save_browser(index)?,
             AppCommand::SaveDefaultProfile(index) => self.save_default_profile(index)?,
             AppCommand::SaveAuth(secret) => self.save_auth(secret)?,
-            AppCommand::SaveTelemetry(secret) => self.save_telemetry(secret)?,
-            AppCommand::OpenFeedback => {
-                self.track_feedback_opened();
-                self.feedback = FeedbackState::default();
-                self.open_surface(Surface::Feedback);
-            }
         }
         self.drain_store_notifications()?;
         Ok(())
@@ -4942,21 +4707,11 @@ impl App {
         self.append_workspace_context_event_blocking(&session.id, &options)?;
         self.append_pending_initial_goal_to_session(&session.id)?;
         let _ = self.refresh_prompt_history_for(&cwd, &options);
-        let input_record = self.store.append_event(
+        self.store.append_event(
             &session.id,
             "session.input",
             typed_user_input_payload_for_submission_for_cwd(&submission, &cwd)?,
         )?;
-        product_analytics::capture_user_message(
-            &self.store,
-            "tui",
-            &session.id,
-            session.parent_id.is_some(),
-            product_analytics::MESSAGE_KIND_INITIAL,
-            input_record.seq,
-            &submission.text,
-            analytics_model_for_selection(&selection),
-        );
         self.prompt_history.record_submission(&submission.text);
         self.maybe_append_message_history(&session.id, &submission.text, &cwd, &options);
         self.selected_session_id = Some(session.id.clone());
@@ -4999,8 +4754,6 @@ impl App {
             .store
             .load_session(&session_id)?
             .with_context(|| format!("unknown session id: {session_id}"))?;
-        let analytics_selection = self.session_model_selection_or_current(&session_id)?;
-        let analytics_model = analytics_model_for_selection(&analytics_selection);
         let options = self.configured_agent_options().ok();
         if let Some(options) = options.as_ref() {
             let _ = self.refresh_prompt_history_for(Path::new(&session.cwd), options);
@@ -5039,16 +4792,6 @@ impl App {
                             "runtime_mailbox_seq": mailbox_item.seq,
                         }),
                     );
-                    product_analytics::capture_user_message(
-                        &self.store,
-                        "tui",
-                        &session_id,
-                        session.parent_id.is_some(),
-                        product_analytics::MESSAGE_KIND_FOLLOWUP,
-                        followup_record.seq,
-                        &submission.text,
-                        analytics_model,
-                    );
                     self.prompt_history.record_submission(&submission.text);
                     if let Some(options) = options.as_ref() {
                         self.maybe_append_message_history(
@@ -5073,21 +4816,11 @@ impl App {
                         typed_user_input_payload_for_submission_for_cwd(&submission, &session.cwd)?;
                     fallback_payload["delivery"] =
                         serde_json::json!(FOLLOWUP_DELIVERY_AFTER_NEXT_TOOL_CALL);
-                    let fallback_record = self.store.append_event(
+                    self.store.append_event(
                         &session_id,
                         SESSION_PENDING_ACTIVE_FOLLOWUP_EVENT,
                         fallback_payload,
                     )?;
-                    product_analytics::capture_user_message(
-                        &self.store,
-                        "tui",
-                        &session_id,
-                        session.parent_id.is_some(),
-                        product_analytics::MESSAGE_KIND_FOLLOWUP,
-                        fallback_record.seq,
-                        &submission.text,
-                        analytics_model,
-                    );
                     self.prompt_history.record_submission(&submission.text);
                     if let Some(options) = options.as_ref() {
                         self.maybe_append_message_history(
@@ -5111,17 +4844,7 @@ impl App {
         } else {
             "session.followup"
         };
-        let followup_record = self.store.append_event(&session_id, event_type, payload)?;
-        product_analytics::capture_user_message(
-            &self.store,
-            "tui",
-            &session_id,
-            session.parent_id.is_some(),
-            product_analytics::MESSAGE_KIND_FOLLOWUP,
-            followup_record.seq,
-            &submission.text,
-            analytics_model,
-        );
+        self.store.append_event(&session_id, event_type, payload)?;
         self.prompt_history.record_submission(&submission.text);
         if let Some(options) = options.as_ref() {
             self.maybe_append_message_history(
@@ -5152,19 +4875,8 @@ impl App {
         let mut payload =
             typed_user_input_payload_for_submission_for_cwd(&submission, &session.cwd)?;
         payload["delivery"] = serde_json::json!(FOLLOWUP_DELIVERY_AFTER_CURRENT_TURN);
-        let followup_record =
-            self.store
-                .append_event(&session_id, SESSION_QUEUED_FOLLOWUP_EVENT, payload)?;
-        product_analytics::capture_user_message(
-            &self.store,
-            "tui",
-            &session_id,
-            session.parent_id.is_some(),
-            product_analytics::MESSAGE_KIND_FOLLOWUP,
-            followup_record.seq,
-            &submission.text,
-            analytics_model_for_selection(&self.session_model_selection_or_current(&session_id)?),
-        );
+        self.store
+            .append_event(&session_id, SESSION_QUEUED_FOLLOWUP_EVENT, payload)?;
         self.prompt_history.record_submission(&submission.text);
         if let Ok(Some(options)) = self.configured_agent_options().map(Some) {
             self.maybe_append_message_history(
@@ -5540,18 +5252,10 @@ impl App {
         if quit_requested {
             return Ok(true);
         }
-        if self.surface == Surface::FeedbackThanks {
-            self.surface = Surface::Main;
-            self.feedback_thanks_started = None;
-            return Ok(false);
-        }
         if self.prompt_history.search.is_some() {
             self.handle_prompt_history_search_key(key)?;
             self.drain_store_notifications()?;
             return Ok(false);
-        }
-        if self.surface == Surface::Feedback {
-            return self.handle_feedback_key(key);
         }
         if self.surface == Surface::Main && !self.is_slash_palette_active() {
             match key {
@@ -5663,12 +5367,6 @@ impl App {
             } if self.surface == Surface::ApiKey => {
                 self.escape_stop_until = None;
                 self.cancel_auth_entry();
-            }
-            KeyEvent {
-                code: KeyCode::Esc, ..
-            } if self.surface == Surface::Telemetry => {
-                self.escape_stop_until = None;
-                self.cancel_secret_entry();
             }
             // /import-passwords opened Secrets just for the import → Esc goes back.
             KeyEvent {
@@ -6015,11 +5713,7 @@ impl App {
             } => self.submit()?,
             _ if (matches!(
                 self.surface,
-                Surface::ApiKey
-                    | Surface::Telemetry
-                    | Surface::Secrets
-                    | Surface::Domains
-                    | Surface::Email
+                Surface::ApiKey | Surface::Secrets | Surface::Domains | Surface::Email
             ) || (self.surface == Surface::ModelSearch
                 && self.model_search_has_filter_input()))
                 && self.handle_api_key_key(key) => {}
@@ -6143,11 +5837,7 @@ impl App {
                     self.prompt_history.reset_navigation();
                 }
             }
-            Surface::ApiKey
-            | Surface::Telemetry
-            | Surface::Secrets
-            | Surface::Domains
-            | Surface::Email => {
+            Surface::ApiKey | Surface::Secrets | Surface::Domains | Surface::Email => {
                 self.composer.insert_paste(text);
                 self.selected_row = 0;
             }
@@ -6421,13 +6111,6 @@ impl App {
                 }
                 _ => self.cancel_auth_entry(),
             },
-            Surface::Telemetry => match self.selected_row.min(1) {
-                0 => {
-                    let secret = self.composer.take_trimmed();
-                    self.dispatch(AppCommand::SaveTelemetry(secret))?;
-                }
-                _ => self.cancel_secret_entry(),
-            },
             Surface::Provider => self.provider_surface_select()?,
             Surface::OpenAiAuth => self.provider_auth_select()?,
             Surface::Model => self.model_surface_select()?,
@@ -6458,19 +6141,7 @@ impl App {
             },
             Surface::Context | Surface::Goal => self.close_surface(),
             Surface::Messages => self.edit_selected_message()?,
-            Surface::Developer => match self.selected_row.min(1) {
-                0 => self.dispatch(AppCommand::ConfigureTelemetry)?,
-                _ => self.close_surface(),
-            },
-            Surface::Feedback => {
-                // Feedback key handling is done in handle_feedback_key; Enter
-                // here is a no-op (the early return in handle_key prevents
-                // reaching execute_surface_selection while Feedback is active).
-            }
-            Surface::FeedbackThanks => {
-                self.surface = Surface::Main;
-                self.feedback_thanks_started = None;
-            }
+            Surface::Developer => self.close_surface(),
             Surface::Main => {
                 self.close_surface();
             }
@@ -6482,12 +6153,6 @@ impl App {
         if !self.setup_started {
             self.setup_started = true;
             self.selected_row = 0;
-            self.track_onboarding_event(
-                "bu:tui onboarding provider list opened",
-                serde_json::json!({
-                    "source": "welcome_cta",
-                }),
-            );
             return Ok(());
         }
         let choices = self.setup_account_choices()?;
@@ -6498,13 +6163,6 @@ impl App {
             return Ok(());
         };
         let account = account.to_string();
-        self.track_onboarding_event(
-            "bu:tui onboarding provider selected",
-            serde_json::json!({
-                "selected_provider": account_kind(&account),
-                "selected_provider_kind": analytics_provider_kind_for_account(&account),
-            }),
-        );
         self.setup_pending_account = Some(account);
         self.setup_result = None;
         self.open_surface(Surface::SetupConfirm);
@@ -6621,23 +6279,10 @@ impl App {
 
     fn start_setup_cloud_onboarding(&mut self) -> Result<()> {
         let has_existing_cloud_key = self.browser_use_cloud_key_ready()?;
-        self.track_onboarding_event(
-            "bu:tui onboarding cloud selected",
-            serde_json::json!({
-                "has_existing_cloud_key": has_existing_cloud_key,
-            }),
-        );
         self.pending_setup_after_cookie_sync = true;
         self.pending_cookie_sync_after_auth = true;
         if has_existing_cloud_key {
             self.select_browser_use_cloud()?;
-            self.track_onboarding_event(
-                "bu:tui onboarding cloud auth succeeded",
-                serde_json::json!({
-                    "method": "existing_key",
-                    "return_to_cookie_sync": true,
-                }),
-            );
             self.show_setup_cloud_success();
             return Ok(());
         }
@@ -6645,12 +6290,6 @@ impl App {
     }
 
     fn decline_setup_cloud_onboarding(&mut self) -> Result<()> {
-        self.track_onboarding_event(
-            "bu:tui onboarding cloud skipped",
-            serde_json::json!({
-                "reason": "user_selected_local_chrome",
-            }),
-        );
         self.pending_setup_after_cookie_sync = false;
         self.pending_cookie_sync_after_auth = false;
         self.select_local_chrome()?;
@@ -6674,40 +6313,20 @@ impl App {
     }
 
     fn show_setup_cloud_success(&mut self) {
-        self.track_onboarding_event(
-            "bu:tui onboarding cookie sync offered",
-            serde_json::json!({
-                "has_cloud_key": true,
-            }),
-        );
         self.setup_result = None;
         self.setup_pending_account = None;
         self.status_notice = None;
         self.open_surface(Surface::SetupCloudSuccess);
     }
 
-    fn continue_after_setup_cloud_success(&mut self) -> Result<()> {
-        self.track_onboarding_event(
-            "bu:tui onboarding cookie sync selected",
-            serde_json::json!({}),
-        );
-        self.open_cookie_sync()
-    }
-
     fn execute_setup_cloud_connected_selection(&mut self) -> Result<()> {
         match self.selected_row.min(1) {
-            0 => self.continue_after_setup_cloud_success(),
+            0 => self.open_cookie_sync(),
             _ => self.skip_setup_cookie_sync_after_cloud_auth(),
         }
     }
 
     fn skip_setup_cookie_sync_after_cloud_auth(&mut self) -> Result<()> {
-        self.track_onboarding_event(
-            "bu:tui onboarding cookie sync skipped",
-            serde_json::json!({
-                "reason": "user_selected_skip",
-            }),
-        );
         self.pending_cookie_sync_after_auth = false;
         if self.pending_setup_after_cookie_sync {
             self.pending_setup_after_cookie_sync = false;
@@ -6737,7 +6356,7 @@ impl App {
         }
         if !self.setup_complete {
             self.status_notice = None;
-            self.open_setup_cloud_offer("after_provider_auth");
+            self.open_surface(Surface::SetupCloud);
             return Ok(());
         }
         self.advance_after_auth()
@@ -6879,9 +6498,7 @@ impl App {
             PaletteAction::ManageDomains => self.open_domains_surface(),
             PaletteAction::ConfigureEmail => self.open_email_surface(),
             PaletteAction::Reload => self.dispatch(AppCommand::Reload)?,
-            PaletteAction::Update => self.dispatch(AppCommand::Update)?,
             PaletteAction::Exit => return Ok(true),
-            PaletteAction::Feedback => self.dispatch(AppCommand::OpenFeedback)?,
         }
         Ok(false)
     }
@@ -7497,256 +7114,6 @@ impl App {
         Ok(())
     }
 
-    fn run_update(&mut self) -> Result<()> {
-        self.status_notice = Some("Checking for browser-use terminal updates...".to_string());
-        product_analytics::capture_async(
-            &self.store,
-            "bu:tui update started",
-            serde_json::json!({ "surface": "tui" }),
-        );
-        match run_update_installer() {
-            Ok(message) => {
-                self.status_notice = Some(message);
-                product_analytics::capture_async(
-                    &self.store,
-                    "bu:tui update completed",
-                    serde_json::json!({ "surface": "tui" }),
-                );
-            }
-            Err(error) => {
-                self.status_notice = Some(format!("Update failed: {error:#}"));
-                product_analytics::capture_async(
-                    &self.store,
-                    "bu:tui update failed",
-                    serde_json::json!({ "surface": "tui" }),
-                );
-            }
-        }
-        Ok(())
-    }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Feedback
-
-    fn or_create_install_id(&mut self) -> Result<String> {
-        if let Some(id) = self.store.get_setting(FEEDBACK_INSTALL_ID_SETTING)? {
-            return Ok(id);
-        }
-        let id = uuid::Uuid::new_v4().to_string();
-        self.store.set_setting(FEEDBACK_INSTALL_ID_SETTING, &id)?;
-        Ok(id)
-    }
-
-    fn handle_feedback_key(&mut self, key: KeyEvent) -> Result<bool> {
-        match self.feedback.step {
-            FeedbackStep::Category => {
-                let count = FeedbackCategory::ALL.len();
-                match key.code {
-                    KeyCode::Up => {
-                        if self.feedback.category_index > 0 {
-                            self.feedback.category_index -= 1;
-                        }
-                    }
-                    KeyCode::Down => {
-                        if self.feedback.category_index + 1 < count {
-                            self.feedback.category_index += 1;
-                        }
-                    }
-                    KeyCode::Char('1') => self.feedback.category_index = 0,
-                    KeyCode::Char('2') => self.feedback.category_index = 1,
-                    KeyCode::Char('3') => self.feedback.category_index = 2,
-                    KeyCode::Char('4') => self.feedback.category_index = 3,
-                    KeyCode::Char('5') => self.feedback.category_index = 4,
-                    KeyCode::Enter => {
-                        self.feedback.step = FeedbackStep::Description;
-                    }
-                    KeyCode::Esc => {
-                        self.close_surface();
-                    }
-                    _ => {}
-                }
-            }
-            FeedbackStep::Description => match key.code {
-                KeyCode::Enter => {
-                    // The "Upload logs?" step only makes sense when there's a
-                    // session whose event log we could attach. On the home
-                    // screen (no selected session) there are no logs to share,
-                    // so submit the feedback directly without that step.
-                    if self.selected_session_id.is_some() {
-                        self.feedback.step = FeedbackStep::UploadLogs;
-                    } else {
-                        self.feedback.upload_yes = false;
-                        self.submit_feedback()?;
-                    }
-                }
-                KeyCode::Backspace => {
-                    self.feedback.description.pop();
-                }
-                KeyCode::Esc => {
-                    self.feedback.step = FeedbackStep::Category;
-                }
-                KeyCode::Char(ch)
-                    if !key.modifiers.contains(KeyModifiers::CONTROL)
-                        && !key.modifiers.contains(KeyModifiers::ALT) =>
-                {
-                    self.feedback.description.push(ch);
-                }
-                _ => {}
-            },
-            FeedbackStep::UploadLogs => match key.code {
-                KeyCode::Up | KeyCode::Left => {
-                    self.feedback.upload_yes = true;
-                }
-                KeyCode::Down | KeyCode::Right => {
-                    self.feedback.upload_yes = false;
-                }
-                KeyCode::Char('y') | KeyCode::Char('Y') => {
-                    self.feedback.upload_yes = true;
-                }
-                KeyCode::Char('n') | KeyCode::Char('N') => {
-                    self.feedback.upload_yes = false;
-                }
-                KeyCode::Enter => {
-                    self.submit_feedback()?;
-                }
-                KeyCode::Esc => {
-                    self.feedback.step = FeedbackStep::Description;
-                }
-                _ => {}
-            },
-        }
-        Ok(false)
-    }
-
-    fn submit_feedback(&mut self) -> Result<()> {
-        let category = FeedbackCategory::ALL
-            .get(self.feedback.category_index)
-            .copied()
-            .unwrap_or(FeedbackCategory::Other);
-        let description = if self.feedback.description.trim().is_empty() {
-            None
-        } else {
-            Some(self.feedback.description.trim().to_string())
-        };
-        let include_logs = self.feedback.upload_yes;
-        let session_id = self.selected_session_id.clone();
-        let session_events: Option<serde_json::Value> = if include_logs {
-            session_id.as_deref().map(|id| {
-                let events = self.cached_events_for_session(id);
-                serde_json::to_value(events).unwrap_or(serde_json::Value::Null)
-            })
-        } else {
-            None
-        };
-        let app_version = env!("CARGO_PKG_VERSION").to_string();
-        let os = std::env::consts::OS.to_string();
-        // Only attach a model when the feedback is about an actual session.
-        // Home-screen feedback has no run context, so leave it null instead of
-        // recording the default selection.
-        let model = if session_id.is_some() {
-            let sel = session_id
-                .as_deref()
-                .and_then(|id| self.session_model_selection_or_current(id).ok())
-                .unwrap_or_else(|| self.current_model_selection());
-            if sel.provider_model.is_empty() {
-                None
-            } else {
-                Some(sel.provider_model)
-            }
-        } else {
-            None
-        };
-        let install_id = self.or_create_install_id().unwrap_or_default();
-
-        let base_url =
-            std::env::var("BUT_FEEDBACK_URL").unwrap_or_else(|_| FEEDBACK_INGEST_URL.to_string());
-        let url = format!("{base_url}/feedback");
-
-        let payload = serde_json::json!({
-            "category": category.api_value(),
-            "description": description,
-            "include_logs": include_logs,
-            "session_id": session_id,
-            "session_events": session_events,
-            "app_version": app_version,
-            "os": os,
-            "model": model,
-            "install_id": install_id,
-        });
-        self.track_feedback_submitted(
-            category,
-            include_logs,
-            description.is_some(),
-            session_id.as_deref(),
-        );
-
-        let (tx, rx) = tokio::sync::mpsc::channel(1);
-        self.feedback_rx = Some(rx);
-
-        // The TUI event loop is not running inside a Tokio runtime, so we can't
-        // `tokio::spawn` here (that panics with "no reactor running"). Run the
-        // POST on a dedicated OS thread with its own current-thread runtime and
-        // report the result back over the channel.
-        std::thread::spawn(move || {
-            let runtime = match tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-            {
-                Ok(runtime) => runtime,
-                Err(error) => {
-                    let _ = tx.blocking_send(FeedbackSubmitResult::Err(error.to_string()));
-                    return;
-                }
-            };
-            runtime.block_on(async move {
-                let result = async {
-                    let client = reqwest::Client::new();
-                    client
-                        .post(&url)
-                        .json(&payload)
-                        .send()
-                        .await
-                        .map_err(|e| e.to_string())?
-                        .error_for_status()
-                        .map_err(|e| e.to_string())?;
-                    Ok::<(), String>(())
-                }
-                .await;
-                let outcome = match result {
-                    Ok(()) => FeedbackSubmitResult::Ok,
-                    Err(e) => FeedbackSubmitResult::Err(e),
-                };
-                let _ = tx.send(outcome).await;
-            });
-        });
-
-        self.surface = Surface::FeedbackThanks;
-        self.feedback_thanks_started = Some(Instant::now());
-        Ok(())
-    }
-
-    fn drain_feedback_notifications(&mut self) -> Result<bool> {
-        let Some(rx) = self.feedback_rx.as_mut() else {
-            return Ok(false);
-        };
-        match rx.try_recv() {
-            Ok(FeedbackSubmitResult::Ok) => {
-                self.feedback_rx = None;
-                Ok(true)
-            }
-            Ok(FeedbackSubmitResult::Err(e)) => {
-                self.status_notice = Some(format!("Feedback send failed: {e}"));
-                self.feedback_rx = None;
-                Ok(true)
-            }
-            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => Ok(false),
-            Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                self.feedback_rx = None;
-                Ok(false)
-            }
-        }
-    }
-
     // ─────────────────────────────────────────────────────────────────────────
 
     fn request_reexec(&mut self) -> Result<()> {
@@ -7807,7 +7174,7 @@ impl App {
         // front.
         if !self.setup_complete {
             self.status_notice = None;
-            self.open_setup_cloud_offer("after_provider_auth");
+            self.open_surface(Surface::SetupCloud);
             return Ok(());
         }
         if self.pending_model_search_after_auth {
@@ -7851,7 +7218,6 @@ impl App {
         self.agent_backend = choice.backend;
         self.model_provider_id = Some(model_provider_id_for_backend(choice.backend).to_string());
         self.model_configured = true;
-        self.track_model_selected();
         if self.account == ACCOUNT_CODEX && !self.has_codex_login()? {
             self.pending_model_after_auth = Some(choice);
             self.start_codex_device_login(self.account.clone())?;
@@ -8481,7 +7847,6 @@ impl App {
             BROWSER_PREFERENCE_MODE_SETTING,
             browser_preference_mode_for_choice(choice),
         )?;
-        self.track_browser_selected();
         self.persist_runtime_settings()?;
         self.stamp_selected_inactive_session_settings()?;
         self.append_browser_backend_change_if_needed(&previous_browser)?;
@@ -8508,7 +7873,6 @@ impl App {
         self.browser = BROWSER_USE_CLOUD.to_string();
         self.store
             .set_setting(BROWSER_PREFERENCE_MODE_SETTING, "cloud")?;
-        self.track_browser_selected();
         self.persist_runtime_settings()?;
         self.append_browser_backend_change_if_needed(&previous_browser)
     }
@@ -8518,7 +7882,6 @@ impl App {
         self.browser = BROWSER_LOCAL_CHROME.to_string();
         self.store
             .set_setting(BROWSER_PREFERENCE_MODE_SETTING, "local")?;
-        self.track_browser_selected();
         self.persist_runtime_settings()?;
         self.append_browser_backend_change_if_needed(&previous_browser)
     }
@@ -8540,7 +7903,6 @@ impl App {
             self.browser_profile_label = None;
             self.default_profile.current_profile_id = None;
         }
-        self.track_browser_selected();
         self.persist_runtime_settings()?;
         self.stamp_selected_inactive_session_settings()?;
         self.append_browser_backend_change_if_needed(&previous_browser)?;
@@ -8726,7 +8088,6 @@ impl App {
     }
 
     fn start_auth_flow(&mut self, account: String) -> Result<()> {
-        self.track_auth_provider_selected(&account);
         if account == BROWSER_USE_CLOUD {
             self.start_browser_use_cloud_browser_login(account)?;
             return Ok(());
@@ -8763,21 +8124,9 @@ impl App {
         self.api_key_account = None;
         self.composer.clear();
         self.browser_use_cloud_login = None;
-        self.track_onboarding_event(
-            "bu:tui onboarding cloud auth started",
-            serde_json::json!({
-                "return_to_cookie_sync": self.pending_cookie_sync_after_auth,
-            }),
-        );
         let flow = match start_browser_use_cloud_login_flow(account.clone()) {
             Ok(flow) => flow,
             Err(error) => {
-                self.track_onboarding_event(
-                    "bu:tui onboarding cloud auth failed",
-                    serde_json::json!({
-                        "failure_kind": "start_failed",
-                    }),
-                );
                 self.show_setup_result(
                     SetupResultKind::Failure,
                     account,
@@ -8956,29 +8305,6 @@ impl App {
         }
     }
 
-    fn start_telemetry_entry(&mut self) {
-        self.composer.clear();
-        self.open_surface(Surface::Telemetry);
-    }
-
-    fn cancel_secret_entry(&mut self) {
-        self.composer.clear();
-        self.close_surface();
-    }
-
-    fn save_telemetry(&mut self, secret: String) -> Result<()> {
-        if secret.trim().is_empty() {
-            self.status_notice = Some("Laminar API key is required.".to_string());
-            self.open_surface(Surface::Telemetry);
-            return Ok(());
-        }
-        self.store
-            .set_setting(LAMINAR_API_KEY_SETTING, secret.trim())?;
-        self.status_notice = Some("Saved Laminar API key.".to_string());
-        self.open_surface(Surface::Developer);
-        Ok(())
-    }
-
     fn store_browser_use_cloud_api_key(
         &self,
         api_key: &str,
@@ -9044,20 +8370,6 @@ impl App {
         self.select_browser_use_cloud()?;
         self.api_key_account = None;
         self.pending_cookie_sync_after_auth = false;
-        self.track_onboarding_event(
-            "bu:tui onboarding cloud auth succeeded",
-            serde_json::json!({
-                "method": "device_login",
-                "return_to_cookie_sync": return_to_cookie_sync,
-                "project_present": !credential.project_id.trim().is_empty(),
-                "project_name_present": credential
-                    .project_name
-                    .as_deref()
-                    .map(str::trim)
-                    .is_some_and(|value| !value.is_empty()),
-                "scopes_count": credential.scopes.len(),
-            }),
-        );
         if return_to_cookie_sync {
             self.show_setup_cloud_success();
             return Ok(());
@@ -9158,7 +8470,6 @@ impl App {
     fn open_cookie_sync(&mut self) -> Result<()> {
         self.open_surface(Surface::CookieSync);
         self.status_notice = None;
-        self.track_onboarding_event("bu:tui cookie sync opened", serde_json::json!({}));
         self.start_cookie_sync_profile_load()
     }
 
@@ -9356,19 +8667,8 @@ impl App {
             self.cookie_sync.profiles.clear();
             self.cookie_sync.selected_profile_label = None;
             self.cookie_sync.rx = None;
-            self.track_onboarding_event(
-                "bu:tui cookie sync profile load failed",
-                serde_json::json!({
-                    "failure_kind": "needs_auth",
-                    "reported_status": "missing_api_key",
-                }),
-            );
             return Ok(());
         };
-        self.track_onboarding_event(
-            "bu:tui cookie sync profile load started",
-            serde_json::json!({}),
-        );
         self.cookie_sync.status = CookieSyncStatus::LoadingProfiles;
         self.cookie_sync.profiles.clear();
         self.cookie_sync.selected_profile_label = None;
@@ -9425,33 +8725,14 @@ impl App {
         else {
             self.cookie_sync.status =
                 CookieSyncStatus::Failed("No local Chromium profiles found.".to_string());
-            self.track_onboarding_event(
-                "bu:tui cookie sync failed",
-                serde_json::json!({
-                    "failure_kind": "no_profiles",
-                }),
-            );
             return Ok(());
         };
         let Some(api_key) = self.browser_use_cloud_api_key_value()? else {
             self.cookie_sync.status = CookieSyncStatus::NeedsAuth;
-            self.track_onboarding_event(
-                "bu:tui cookie sync failed",
-                serde_json::json!({
-                    "failure_kind": "needs_auth",
-                }),
-            );
             return Ok(());
         };
         self.cookie_sync.status = CookieSyncStatus::Syncing;
         self.cookie_sync.selected_profile_label = Some(profile.display_name.clone());
-        self.track_onboarding_event(
-            "bu:tui cookie sync started",
-            serde_json::json!({
-                "selected_profile_browser": profile_browser_kind(&profile.browser_name),
-                "profiles_count": self.cookie_sync.profiles.len(),
-            }),
-        );
         let command = format!(
             "browser profile sync --profile {} --all-cookies",
             browser_shell_quote_arg(&profile.id)
@@ -9487,180 +8768,12 @@ impl App {
         Ok(())
     }
 
-    fn open_setup_cloud_offer(&mut self, source: &'static str) {
-        let has_existing_cloud_key = self.browser_use_cloud_key_ready().unwrap_or(false);
-        self.track_onboarding_event(
-            "bu:tui onboarding cloud offered",
-            serde_json::json!({
-                "source": source,
-                "has_existing_cloud_key": has_existing_cloud_key,
-            }),
-        );
-        self.open_surface(Surface::SetupCloud);
-    }
-
-    fn track_onboarding_event(&self, event: &'static str, extra: serde_json::Value) {
-        if cfg!(test) {
-            return;
-        }
-        let selection = self.current_model_selection();
-        let mut properties = serde_json::json!({
-            "surface": "tui",
-            "setup_flow": !self.setup_complete || self.pending_setup_after_cookie_sync,
-            "setup_complete": self.setup_complete,
-            "provider_kind": analytics_provider_kind_for_account(&self.account),
-            "provider": account_kind(&self.account),
-            "browser_kind": browser_choice_kind(&self.browser),
-        });
-        product_analytics::append_model_analytics(
-            &mut properties,
-            analytics_model_for_selection(&selection),
-        );
-        merge_json_object(&mut properties, extra);
-        product_analytics::capture_async(&self.store, event, properties);
-    }
-
     fn complete_setup(&mut self) -> Result<()> {
         self.setup_complete = true;
         self.setup_started = false;
         self.setup_cta_caret_visible = true;
         self.store.set_setting("setup.complete", "1")?;
-        if cfg!(test) {
-            return Ok(());
-        }
-        let selection = self.current_model_selection();
-        let mut properties = serde_json::json!({
-            "surface": "tui",
-            "provider_kind": analytics_provider_kind_for_account(&self.account),
-            "provider": account_kind(&self.account),
-            "browser_kind": browser_choice_kind(&self.browser),
-        });
-        product_analytics::append_model_analytics(
-            &mut properties,
-            analytics_model_for_selection(&selection),
-        );
-        product_analytics::capture_async(&self.store, "bu:tui setup completed", properties);
         Ok(())
-    }
-
-    fn track_app_opened(&self) {
-        if cfg!(test) {
-            return;
-        }
-        let selection = self.current_model_selection();
-        let mut properties = serde_json::json!({
-            "surface": "tui",
-            "provider_kind": analytics_provider_kind_for_account(&self.account),
-            "provider": account_kind(&self.account),
-            "browser_kind": browser_choice_kind(&self.browser),
-            "setup_complete": self.setup_complete,
-        });
-        product_analytics::append_model_analytics(
-            &mut properties,
-            analytics_model_for_selection(&selection),
-        );
-        product_analytics::capture_async(&self.store, "bu:tui app opened", properties);
-        if !self.setup_complete {
-            product_analytics::capture_async(
-                &self.store,
-                "bu:tui onboarding started",
-                serde_json::json!({
-                    "surface": "tui",
-                    "provider_kind": analytics_provider_kind_for_account(&self.account),
-                    "provider": account_kind(&self.account),
-                    "browser_kind": browser_choice_kind(&self.browser),
-                }),
-            );
-        }
-    }
-
-    fn track_model_selected(&self) {
-        if cfg!(test) {
-            return;
-        }
-        let selection = self.current_model_selection();
-        let mut properties = serde_json::json!({
-            "surface": "tui",
-            "provider_kind": analytics_provider_kind_for_account(&self.account),
-            "provider": account_kind(&self.account),
-        });
-        product_analytics::append_model_analytics(
-            &mut properties,
-            analytics_model_for_selection(&selection),
-        );
-        product_analytics::capture_async(&self.store, "bu:tui model selected", properties);
-    }
-
-    fn track_browser_selected(&self) {
-        if cfg!(test) {
-            return;
-        }
-        product_analytics::capture_async(
-            &self.store,
-            "bu:tui browser selected",
-            serde_json::json!({
-                "surface": "tui",
-                "browser_kind": browser_choice_kind(&self.browser),
-            }),
-        );
-    }
-
-    fn track_auth_provider_selected(&self, account: &str) {
-        if cfg!(test) {
-            return;
-        }
-        product_analytics::capture_async(
-            &self.store,
-            "bu:tui auth provider selected",
-            serde_json::json!({
-                "surface": "tui",
-                "provider_kind": analytics_provider_kind_for_account(account),
-                "provider": account_kind(account),
-            }),
-        );
-    }
-
-    fn track_feedback_opened(&self) {
-        if cfg!(test) {
-            return;
-        }
-        product_analytics::capture_async(
-            &self.store,
-            "bu:tui feedback opened",
-            serde_json::json!({
-                "surface": "tui",
-                "has_session": self.selected_session_id.is_some(),
-            }),
-        );
-    }
-
-    fn track_feedback_submitted(
-        &self,
-        category: FeedbackCategory,
-        include_logs: bool,
-        has_description: bool,
-        session_id: Option<&str>,
-    ) {
-        if cfg!(test) {
-            return;
-        }
-        let mut properties = serde_json::json!({
-            "surface": "tui",
-            "category": category.api_value(),
-            "include_logs": include_logs,
-            "has_description": has_description,
-            "has_session": session_id.is_some(),
-        });
-        if let Some(selection) = session_id
-            .and_then(|id| self.session_model_selection_or_current(id).ok())
-            .or_else(|| session_id.map(|_| self.current_model_selection()))
-        {
-            product_analytics::append_model_analytics(
-                &mut properties,
-                analytics_model_for_selection(&selection),
-            );
-        }
-        product_analytics::capture_async(&self.store, "bu:tui feedback submitted", properties);
     }
 
     fn persist_runtime_settings(&self) -> Result<()> {
@@ -9701,7 +8814,7 @@ impl App {
             Surface::SetupCloud => 2,
             Surface::SetupCloudSuccess => 2,
             Surface::Account => AUTH_CHOICES.len(),
-            Surface::ApiKey | Surface::Telemetry => 2,
+            Surface::ApiKey => 2,
             Surface::Email => 2,
             Surface::Secrets | Surface::Domains => 0,
             Surface::Provider => self.recommended_models().len() + self.provider_rows().len(),
@@ -9716,9 +8829,7 @@ impl App {
             Surface::Context | Surface::Goal => 0,
             Surface::History => self.history_visible_indices()?.len(),
             Surface::Messages => self.message_action_rows().len(),
-            Surface::Developer => 1,
-            Surface::Feedback => 0,
-            Surface::FeedbackThanks => 0,
+            Surface::Developer => 0,
         })
     }
 
@@ -9862,10 +8973,6 @@ impl App {
 
     fn tick_live_spinner(&mut self) {
         self.live_spinner_frame = self.live_spinner_frame.wrapping_add(1);
-    }
-
-    fn should_animate_feedback_thanks(&self) -> bool {
-        self.surface == Surface::FeedbackThanks
     }
 
     #[cfg(test)]
@@ -10241,23 +9348,7 @@ impl App {
             .as_ref()
             .and_then(|flow| flow.browser_open_error.as_deref())
     }
-
-    fn laminar_status(&self) -> Result<String> {
-        if self
-            .store
-            .get_setting(LAMINAR_API_KEY_SETTING)?
-            .is_some_and(|value| !value.trim().is_empty())
-        {
-            return Ok("connected via TUI config".to_string());
-        }
-        if std::env::var("LMNR_PROJECT_API_KEY").is_ok_and(|value| !value.trim().is_empty()) {
-            return Ok("connected via LMNR_PROJECT_API_KEY".to_string());
-        }
-        Ok("not connected".to_string())
-    }
 }
-
-const LAMINAR_API_KEY_SETTING: &str = "telemetry.laminar.api_key";
 
 fn codex_env_auth_present() -> bool {
     codex_auth_from_explicit_env().is_some()
@@ -10464,41 +9555,6 @@ fn cookie_sync_result_status(value: &serde_json::Value) -> Option<CookieSyncStat
     }
 }
 
-fn cookie_sync_result_analytics(value: &serde_json::Value) -> serde_json::Value {
-    serde_json::json!({
-        "reported_status": value
-            .get("status")
-            .and_then(serde_json::Value::as_str)
-            .unwrap_or("unknown"),
-        "synced": value
-            .get("synced")
-            .and_then(serde_json::Value::as_bool)
-            .unwrap_or(false),
-        "synced_cookie_count": value
-            .get("synced_cookie_count")
-            .and_then(serde_json::Value::as_u64)
-            .unwrap_or(0),
-        "cloud_profile_present": value.get("cloud_profile").is_some(),
-        "local_profile_present": value.get("profile").is_some(),
-    })
-}
-
-fn cookie_sync_error_kind(error: &str) -> &'static str {
-    let normalized = error.to_ascii_lowercase();
-    if normalized.contains("api key")
-        || normalized.contains("auth")
-        || normalized.contains("unauthorized")
-    {
-        "needs_auth"
-    } else if normalized.contains("profile") && normalized.contains("found") {
-        "no_profiles"
-    } else if normalized.contains("unexpected") || normalized.contains("json") {
-        "unexpected_response"
-    } else {
-        "command_failed"
-    }
-}
-
 fn cookie_sync_success_message(value: &serde_json::Value) -> String {
     let profile = value
         .get("profile")
@@ -10603,75 +9659,6 @@ fn auth_secret_label(account: &str) -> &'static str {
     }
 }
 
-fn account_kind(account: &str) -> &'static str {
-    match account {
-        ACCOUNT_CODEX => "codex",
-        ACCOUNT_OPENAI => "openai",
-        ACCOUNT_OPENROUTER => "openrouter",
-        ACCOUNT_GOOGLE => "google",
-        ACCOUNT_DEEPSEEK => "deepseek",
-        ACCOUNT_ANTHROPIC => "anthropic",
-        BROWSER_USE_CLOUD => "browser_use_cloud",
-        account if is_claude_code_account(account) => "claude_code",
-        _ => "unknown",
-    }
-}
-
-fn analytics_provider_kind_for_account(account: &str) -> &'static str {
-    match account {
-        ACCOUNT_CODEX => "subscription",
-        ACCOUNT_OPENAI | ACCOUNT_OPENROUTER | ACCOUNT_GOOGLE | ACCOUNT_DEEPSEEK
-        | ACCOUNT_ANTHROPIC | BROWSER_USE_CLOUD => "api_key",
-        account if is_claude_code_account(account) => "oauth",
-        _ => "other",
-    }
-}
-
-fn analytics_model_for_selection(
-    selection: &SessionModelSelection,
-) -> product_analytics::ModelAnalytics<'_> {
-    product_analytics::ModelAnalytics {
-        provider_kind: Some(analytics_provider_kind_for_account(&selection.account)),
-        provider: Some(account_kind(&selection.account)),
-        model: Some(&selection.provider_model),
-    }
-}
-
-fn merge_json_object(target: &mut serde_json::Value, extra: serde_json::Value) {
-    let Some(target) = target.as_object_mut() else {
-        return;
-    };
-    let Some(extra) = extra.as_object() else {
-        return;
-    };
-    for (key, value) in extra {
-        target.insert(key.clone(), value.clone());
-    }
-}
-
-fn browser_choice_kind(browser: &str) -> &'static str {
-    match browser {
-        BROWSER_LOCAL_CHROME => "local",
-        "Headless Chromium" => "headless",
-        "Managed Chromium" => "managed",
-        BROWSER_USE_CLOUD => "cloud",
-        _ => "other",
-    }
-}
-
-fn profile_browser_kind(browser: &str) -> &'static str {
-    match browser.trim().to_ascii_lowercase().as_str() {
-        "google chrome" => "google_chrome",
-        "chromium" => "chromium",
-        "microsoft edge"
-        | "microsoft edge beta"
-        | "microsoft edge dev"
-        | "microsoft edge canary" => "microsoft_edge",
-        "brave" => "brave",
-        _ => "other",
-    }
-}
-
 fn browser_preference_mode_for_choice(browser: &str) -> &'static str {
     match browser {
         "Headless Chromium" => "managed-headless",
@@ -10679,81 +9666,6 @@ fn browser_preference_mode_for_choice(browser: &str) -> &'static str {
         BROWSER_USE_CLOUD => "cloud",
         _ => "local",
     }
-}
-
-#[cfg(not(test))]
-fn run_update_installer() -> Result<String> {
-    let source = std::env::var("BUT_INSTALL_SCRIPT")
-        .ok()
-        .filter(|value| !value.trim().is_empty())
-        .or_else(|| local_install_script_path().map(|path| path.display().to_string()));
-
-    let output = if let Some(source) = source {
-        if source.starts_with("https://") || source.starts_with("http://") {
-            run_remote_install_script(&source)?
-        } else {
-            std::process::Command::new("sh")
-                .arg(&source)
-                .arg("--no-launch")
-                .output()
-                .with_context(|| format!("run installer script {source}"))?
-        }
-    } else {
-        let repo = std::env::var("BUT_RELEASE_REPO")
-            .ok()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| "browser-use/terminal".to_string());
-        let url =
-            format!("https://raw.githubusercontent.com/{repo}/main/scripts/install/install.sh");
-        run_remote_install_script(&url)?
-    };
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let detail = stderr.trim();
-        if !detail.is_empty() {
-            anyhow::bail!("{detail}");
-        }
-        anyhow::bail!("{}", stdout.trim());
-    }
-
-    Ok("Update installed. Restart browser-use terminal to use the latest release.".to_string())
-}
-
-#[cfg(test)]
-fn run_update_installer() -> Result<String> {
-    Ok("Update command is available.".to_string())
-}
-
-#[cfg(not(test))]
-fn local_install_script_path() -> Option<PathBuf> {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .map(|root| root.join("scripts/install/install.sh"))
-        .filter(|path| path.is_file())
-}
-
-#[cfg(not(test))]
-fn run_remote_install_script(url: &str) -> Result<std::process::Output> {
-    let script = r#"
-if command -v curl >/dev/null 2>&1; then
-  curl -fsSL "$1"
-elif command -v wget >/dev/null 2>&1; then
-  wget -q -O - "$1"
-else
-  echo "curl or wget is required to update browser-use terminal." >&2
-  exit 1
-fi | sh -s -- --no-launch
-"#;
-    std::process::Command::new("sh")
-        .arg("-c")
-        .arg(script)
-        .arg("browser-use-terminal-update")
-        .arg(url)
-        .output()
-        .with_context(|| format!("download and run installer script {url}"))
 }
 
 #[cfg(not(test))]
@@ -11537,7 +10449,6 @@ fn main() -> Result<()> {
         print_native_transcript(&mut app)?;
         return Ok(());
     }
-    app.track_app_opened();
     run_terminal(app)
 }
 
@@ -11643,7 +10554,6 @@ fn run_terminal(mut app: App) -> Result<()> {
             draw_needed |= app.drain_cookie_sync_notifications()?;
             draw_needed |= app.drain_default_profile_notifications()?;
             draw_needed |= app.drain_provider_fetch()?;
-            draw_needed |= app.drain_feedback_notifications()?;
             draw_needed |= app.drain_secret_import();
             if last_fallback_refresh.elapsed() >= STORE_FALLBACK_REFRESH_INTERVAL {
                 draw_needed |= app.refresh_state_cache_from_store()?;
@@ -11689,9 +10599,6 @@ fn run_terminal(mut app: App) -> Result<()> {
             if app.should_animate_setup_cta() {
                 poll_interval = poll_interval.min(SETUP_CTA_BLINK_INTERVAL);
             }
-            if app.should_animate_feedback_thanks() {
-                poll_interval = poll_interval.min(Duration::from_millis(FEEDBACK_THANKS_FRAME_MS));
-            }
             if !event::poll(poll_interval)? {
                 // Animate the welcome-screen logo by advancing the anim and
                 // triggering a redraw every ~70ms while the welcome surface
@@ -11728,19 +10635,6 @@ fn run_terminal(mut app: App) -> Result<()> {
                     app.tick_setup_cta();
                     draw_needed = true;
                     last_setup_cta_blink_tick = Instant::now();
-                }
-                // Handle the shared waving-character animation. Feedback
-                // thanks auto-dismisses; Cloud setup success waits for input.
-                if app.should_animate_feedback_thanks() {
-                    if app.surface == Surface::FeedbackThanks
-                        && app
-                            .feedback_thanks_started
-                            .is_some_and(|t| t.elapsed() >= FEEDBACK_THANKS_AUTO_DISMISS)
-                    {
-                        app.surface = Surface::Main;
-                        app.feedback_thanks_started = None;
-                    }
-                    draw_needed = true;
                 }
                 continue;
             }
@@ -14015,9 +12909,7 @@ mod redesign_tests {
         assert_ne!(app.surface, Surface::Messages);
         let screen = render_dump(&mut app)?;
         assert!(screen.contains("Conversation paused"));
-        assert!(screen.contains(
-            "What should the model do differently? If something went wrong, please use /feedback :)"
-        ));
+        assert!(screen.contains("What should the model do differently?"));
         assert!(!screen.contains("Conversation paused -"));
         assert!(!screen.contains("Session paused"));
         assert!(!screen.contains("Previous work"));
@@ -14672,7 +13564,6 @@ mod redesign_tests {
             Surface::Messages => "Messages",
             Surface::Developer => "Developer",
             Surface::ApiKey => "API key",
-            Surface::Telemetry => "Laminar",
             Surface::Setup
             | Surface::SetupConfirm
             | Surface::SetupResult
@@ -14681,7 +13572,6 @@ mod redesign_tests {
             Surface::Secrets => "Secrets",
             Surface::Domains => "Domains",
             Surface::Email => "Email inbox",
-            Surface::Feedback | Surface::FeedbackThanks => "Feedback",
             Surface::Main => "",
         }
     }
@@ -17886,15 +16776,6 @@ wire_api = "responses"
         assert!(app.composer.is_empty());
         assert_eq!(app.store.get_setting("auth.openrouter.api_key")?, None);
 
-        app.open_surface(Surface::Developer);
-        assert!(!app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))?);
-        assert_eq!(app.surface, Surface::Telemetry);
-        assert!(!app.handle_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE))?);
-        let screen = render_dump(&mut app)?;
-        assert!(screen.contains("> Cancel"));
-        assert!(!app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))?);
-        assert_eq!(app.surface, Surface::Main);
-        assert_eq!(app.store.get_setting(LAMINAR_API_KEY_SETTING)?, None);
         Ok(())
     }
 
@@ -18231,15 +17112,6 @@ wire_api = "responses"
         }));
         assert!(!rows.iter().any(|row| row.label.contains("API key")));
         Ok(())
-    }
-
-    #[test]
-    fn google_account_analytics_kind_is_api_key() {
-        assert_eq!(
-            analytics_provider_kind_for_account(settings::ACCOUNT_GOOGLE),
-            "api_key"
-        );
-        assert_eq!(account_kind(settings::ACCOUNT_GOOGLE), "google");
     }
 
     #[test]
@@ -18951,9 +17823,6 @@ wire_api = "responses"
         app.start_auth_entry(settings::ACCOUNT_OPENROUTER.to_string());
         assert_nav(&mut app, 2)?;
         app.cancel_auth_entry();
-        app.start_telemetry_entry();
-        assert_nav(&mut app, 2)?;
-        app.cancel_secret_entry();
 
         for idx in 0..3 {
             let session = app.store.create_session(None, std::env::current_dir()?)?;
@@ -19136,42 +18005,6 @@ wire_api = "responses"
         assert!(!screen.contains("live https://live.browser-use.com"));
         assert!(!screen.contains("source https://live.browser-use.com"));
         Ok(())
-    }
-
-    #[test]
-    fn laminar_key_can_be_saved_from_developer_surface() -> Result<()> {
-        let saved = std::env::var("LMNR_PROJECT_API_KEY").ok();
-        std::env::remove_var("LMNR_PROJECT_API_KEY");
-        let result = (|| -> Result<()> {
-            let temp = tempfile::tempdir()?;
-            let mut app = ready_app(&temp)?;
-            app.open_surface(Surface::Developer);
-            let screen = render_dump(&mut app)?;
-            assert!(screen.contains("not connected"));
-            assert!(screen.contains("Configure Laminar"));
-
-            assert!(!app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))?);
-            assert_eq!(app.surface, Surface::Telemetry);
-            app.handle_paste("lmnr_test_key");
-            let screen = render_dump(&mut app)?;
-            assert!(screen.contains("Laminar API key"));
-            assert!(screen.contains("lmnr_tes"));
-            assert!(!screen.contains("lmnr_test_key"));
-
-            assert!(!app.handle_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE))?);
-            assert_eq!(
-                app.store.get_setting(LAMINAR_API_KEY_SETTING)?.as_deref(),
-                Some("lmnr_test_key")
-            );
-            assert_eq!(app.surface, Surface::Developer);
-            let screen = render_dump(&mut app)?;
-            assert!(screen.contains("connected via TUI config"));
-            Ok(())
-        })();
-        if let Some(value) = saved {
-            std::env::set_var("LMNR_PROJECT_API_KEY", value);
-        }
-        result
     }
 
     #[test]
@@ -20906,11 +19739,6 @@ wire_api = "responses"
         )?;
         app.store.append_event(
             &session.id,
-            "telemetry.failed",
-            serde_json::json!({"error": "trace exporter unavailable"}),
-        )?;
-        app.store.append_event(
-            &session.id,
             "patch.started",
             serde_json::json!({"tool_call_id": "patch_1"}),
         )?;
@@ -20950,7 +19778,6 @@ wire_api = "responses"
         assert!(!text.contains("read_file finished"));
         assert!(!text.contains("batch_started"));
         assert!(!text.contains("README raw body should stay out"));
-        assert!(!text.contains("trace exporter unavailable"));
         assert!(!text.contains("token_budget"));
         assert!(!text.contains("waiting for GPT-5.5"));
         assert!(!terminal_text.contains("waiting for GPT-5.5"));
@@ -22300,7 +21127,7 @@ wire_api = "responses"
 
         app.open_surface(Surface::Developer);
         let screen = render_dump(&mut app)?;
-        assert!(screen.contains("Laminar"));
+        assert!(screen.contains("Current task"));
         assert!(screen.contains("Events"));
         Ok(())
     }
@@ -23126,9 +21953,7 @@ wire_api = "responses"
         );
         let screen = render_dump(&mut app)?;
         assert!(screen.contains("Conversation paused"));
-        assert!(screen.contains(
-            "What should the model do differently? If something went wrong, please use /feedback :)"
-        ));
+        assert!(screen.contains("What should the model do differently?"));
         assert!(!screen.contains("Conversation paused -"));
         assert!(!screen.contains("Session paused"));
         assert!(!screen.contains("Previous work"));

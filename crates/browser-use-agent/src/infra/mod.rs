@@ -7,9 +7,6 @@
 //!   (`browser-use-core::review`). The base review instructions delegate to the
 //!   canonical [`crate::prompts::review_prompt`]; only the git-scenario builders
 //!   are ported fresh.
-//! - [`analytics`] — PostHog product-analytics capture
-//!   (`browser-use-core::product_analytics`), suppressed under `cfg!(test)`
-//!   exactly as core does, so tests are inherently offline.
 //! - [`lifecycle`] — process-lifecycle infra: `install_process_crypto_provider`
 //!   and the `UnifiedExecShutdownCleanup` RAII guard
 //!   (`browser-use-core::lib`).
@@ -17,13 +14,11 @@
 //!   into the [`browser_use_store::Store`]
 //!   (`browser-use-core::persistence`).
 
-pub mod analytics;
 pub mod lifecycle;
 pub mod persistence;
 pub mod review;
 
 // Flat reexports mirroring the symbols the TUI/CLI import from the legacy core.
-pub use analytics::{browser_kind, capture_async, capture_blocking, duration_bucket};
 pub use lifecycle::{install_process_crypto_provider, UnifiedExecShutdownCleanup};
 pub use persistence::{
     record_browser_command_response_events, record_browser_script_response_events,
@@ -52,9 +47,5 @@ mod tests {
             review_prompt_uncommitted_changes(),
             "Review the current code changes (staged, unstaged, and untracked files) and provide prioritized findings."
         );
-
-        // Analytics classification helpers are reachable and pure.
-        assert_eq!(browser_kind(Some("cloud")), "cloud");
-        assert_eq!(duration_bucket(std::time::Duration::from_secs(0)), "<10s");
     }
 }

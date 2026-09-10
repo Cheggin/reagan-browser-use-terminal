@@ -7,8 +7,7 @@ tasks:
     cmds:
       - |
         scripts/install-agent-ripgrep.sh target/debug/agent-tools >/dev/null
-        BUT_TELEMETRY="${BUT_TELEMETRY:-0}" \
-          BUT_AGENT_TOOLS_DIR="$PWD/target/debug/agent-tools" \
+        BUT_AGENT_TOOLS_DIR="$PWD/target/debug/agent-tools" \
           cargo run -p browser-use-cli -- {{.CLI_ARGS}}
 
   tui:dev:
@@ -20,8 +19,7 @@ tasks:
     cmds:
       - |
         scripts/install-agent-ripgrep.sh target/debug/agent-tools >/dev/null
-        BUT_TELEMETRY="${BUT_TELEMETRY:-0}" \
-          BUT_AGENT_TOOLS_DIR="$PWD/target/debug/agent-tools" \
+        BUT_AGENT_TOOLS_DIR="$PWD/target/debug/agent-tools" \
           cargo run -p browser-use-tui -- {{.CLI_ARGS}}
 
   reset:onboarding:
@@ -133,7 +131,7 @@ tasks:
 
         if [ -d "$state_dir" ]; then
           if [ -f "$state_dir/state.db" ]; then
-            sqlite3 "$state_dir/state.db" "DELETE FROM app_settings WHERE key LIKE 'auth.%' OR key='telemetry.laminar.api_key'; UPDATE app_settings SET value='0', updated_ms=(strftime('%s','now') * 1000) WHERE key='setup.complete';"
+            sqlite3 "$state_dir/state.db" "DELETE FROM app_settings WHERE key LIKE 'auth.%'; UPDATE app_settings SET value='0', updated_ms=(strftime('%s','now') * 1000) WHERE key='setup.complete';"
           fi
           mkdir -p "$backup_dir"
           cp -a "$state_dir" "$backup_dir/"

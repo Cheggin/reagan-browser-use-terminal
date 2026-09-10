@@ -1,5 +1,7 @@
 # Public Launch Checklist
 
+This historical checklist describes the upstream public release. This private checkout uses local source builds and has no analytics or updater.
+
 This is the launch gate for making this repo public and posting about it. The goal is simple: a stranger should be able to understand what this is, install it, run it, trust the repo shape, and know where the edges are.
 
 ## Must Do Before The Twitter Post
@@ -18,17 +20,6 @@ browser-use
 ```
 
 - [ ] Confirm every launch alias opens the terminal: `browser`, `browser-use`, `browser-use-terminal`, and `but`.
-- [ ] Confirm installed launch aliases check for a newer release before opening the TUI and show Update now / Skip choices.
-
-- [ ] Run update against the real release path:
-
-```bash
-browser-use-terminal update --check
-browser-use-terminal update
-```
-
-- [ ] Confirm update works through launch aliases: `browser update --check`, `browser-use update --check`, and `browser-use-terminal update --check`.
-- [ ] Confirm `/update` in the TUI installs the latest release and gives a clear restart message.
 - [ ] Decide whether Linux arm64 is supported for launch. If yes, add it to the release workflow before posting.
 
 ### 2. Add the missing open-source files
@@ -90,7 +81,7 @@ rg -n "/Users/|/home/|Developer/browser-harness|Downloads/tmp|hackathons|sk-|api
 - [ ] Confirm screenshots/GIFs do not show tokens, local usernames, private paths, or account ids.
 - [ ] Confirm logs, traces, artifacts, and terminal dumps are not committed.
 - [x] Decide and document telemetry policy.
-  Decision: anonymous product analytics are enabled by default, fail open, and can be disabled with `BUT_TELEMETRY=0`.
+  Product analytics and remote trace reporting have been removed from this private build.
 - [ ] Document where local state is stored:
 
 ```text

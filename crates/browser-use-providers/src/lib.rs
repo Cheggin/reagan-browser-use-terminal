@@ -2741,9 +2741,6 @@ fn codex_callback_html(status: u16, title: &str, message: &str) -> String {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{title}</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;650&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     :root {{
       color-scheme: light dark;
@@ -2771,7 +2768,7 @@ fn codex_callback_html(status: u16, title: &str, message: &str) -> String {
       margin: 0;
       background: var(--bg);
       color: var(--text);
-      font: 14px/1.5 "Geist", ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      font: 14px/1.5 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }}
     main {{
       position: fixed;
@@ -2801,7 +2798,7 @@ fn codex_callback_html(status: u16, title: &str, message: &str) -> String {
       border-radius: 8px;
       background: var(--detail-bg);
       color: var(--detail-text);
-      font: 12px/1.45 "Geist Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font: 12px/1.45 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       overflow-wrap: anywhere;
     }}
   </style>
@@ -7669,28 +7666,8 @@ fn litellm_pricing_data() -> Option<&'static HashMap<String, Value>> {
 
 fn load_litellm_pricing_data() -> Option<HashMap<String, Value>> {
     let cache_path = pricing_cache_dir().join("model_prices_and_context_window.json");
-    if cache_path.exists() && cache_file_fresh(&cache_path) {
-        if let Ok(raw) = fs::read_to_string(&cache_path) {
-            if let Ok(data) = serde_json::from_str::<HashMap<String, Value>>(&raw) {
-                return Some(data);
-            }
-        }
-    }
-
-    let response = reqwest::blocking::Client::new()
-        .get("https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json")
-        .send()
-        .ok()?;
-    if !response.status().is_success() {
-        return None;
-    }
-    let raw = response.text().ok()?;
-    let data = serde_json::from_str::<HashMap<String, Value>>(&raw).ok()?;
-    if let Some(parent) = cache_path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    let _ = fs::write(cache_path, raw);
-    Some(data)
+    let raw = fs::read_to_string(cache_path).ok()?;
+    serde_json::from_str(&raw).ok()
 }
 
 fn pricing_cache_dir() -> PathBuf {
@@ -7708,16 +7685,6 @@ fn pricing_cache_dir() -> PathBuf {
         .join("token_cost")
 }
 
-fn cache_file_fresh(path: &Path) -> bool {
-    let Ok(modified) = path.metadata().and_then(|metadata| metadata.modified()) else {
-        return false;
-    };
-    SystemTime::now()
-        .duration_since(modified)
-        .unwrap_or(Duration::MAX)
-        < Duration::from_secs(24 * 60 * 60)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7728,6 +7695,38 @@ mod tests {
     use std::time::Instant;
 
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn callback_page_loads_without_external_resources() {
+        for status in [200, 400, 404] {
+            let page = codex_callback_page(status, &CodexAuthorization::default());
+            assert!(!page.body.contains("https://"));
+            assert!(!page.body.contains("http://"));
+        }
+    }
+
+    #[test]
+    fn cost_estimation_reads_old_local_prices_without_network() -> Result<()> {
+        let _lock = ENV_LOCK.lock().unwrap();
+        let cache = tempfile::tempdir()?;
+        let _cache_env = EnvVarGuard::set_str("XDG_CACHE_HOME", cache.path().to_str().unwrap());
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let proxy = format!("http://{}", listener.local_addr()?);
+        drop(listener);
+        let _proxy = EnvVarGuard::set_str("HTTPS_PROXY", &proxy);
+        let _no_proxy = EnvVarGuard::set_str("NO_PROXY", "");
+        let path = pricing_cache_dir().join("model_prices_and_context_window.json");
+        fs::create_dir_all(path.parent().unwrap())?;
+        fs::write(
+            &path,
+            r#"{"local-model":{"input_cost_per_token":0.000001}}"#,
+        )?;
+        fs::File::open(&path)?.set_modified(SystemTime::UNIX_EPOCH)?;
+
+        let prices = load_litellm_pricing_data().expect("use local prices while offline");
+        assert_eq!(prices["local-model"]["input_cost_per_token"], 0.000001);
+        Ok(())
+    }
 
     struct EnvVarGuard {
         key: &'static str,

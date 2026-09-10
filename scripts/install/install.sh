@@ -3,7 +3,7 @@
 set -eu
 
 RELEASE="latest"
-REPO="${BUT_RELEASE_REPO:-browser-use/terminal}"
+REPO="${BUT_RELEASE_REPO:-Cheggin/reagan-browser-use-terminal}"
 BIN_DIR="${BUT_INSTALL_DIR:-$HOME/.local/bin}"
 BUT_HOME_DIR="${BUT_HOME:-$HOME/.browser-use-terminal}"
 STANDALONE_ROOT="$BUT_HOME_DIR/packages/standalone"
@@ -62,11 +62,9 @@ parse_args() {
 Usage: install.sh [--release VERSION] [--no-launch]
 
 Environment:
-  BUT_RELEASE_REPO   GitHub repo containing releases. Default: browser-use/terminal
+  BUT_RELEASE_REPO   GitHub repo containing releases. Default: Cheggin/reagan-browser-use-terminal
   BUT_INSTALL_DIR    Directory for visible commands. Default: \$HOME/.local/bin
   BUT_HOME           State/package root. Default: \$HOME/.browser-use-terminal
-  BUT_AUTO_UPDATE    Set to 0 to skip startup update prompts in launchers.
-  BUT_REQUIRE_LATEST Set to 1 to fail startup if the automatic update check fails.
 EOF
         exit 0
         ;;
@@ -553,70 +551,7 @@ BUT_HOME_DIR="\${BUT_HOME:-$BUT_HOME_DIR}"
 CURRENT="\$BUT_HOME_DIR/packages/standalone/current"
 export BUT_HOME="\$BUT_HOME_DIR"
 export BUT_INSTALL_DIR="\${BUT_INSTALL_DIR:-$BIN_DIR}"
-export BUT_RELEASE_REPO="\${BUT_RELEASE_REPO:-$REPO}"
 export PYTHONPATH="\$CURRENT/python\${PYTHONPATH:+:\$PYTHONPATH}"
-prompt_browser_use_terminal_update() {
-  case "\${BUT_AUTO_UPDATE:-1}" in
-    0 | false | FALSE | off | OFF | no | NO)
-      return
-      ;;
-  esac
-
-  [ -x "\$CURRENT/bin/browser-use-terminal" ] || return
-
-  log_dir="\$BUT_HOME_DIR/packages/standalone"
-  log="\$log_dir/last_update_check.log"
-  mkdir -p "\$log_dir" 2>/dev/null || return
-
-  check_output="\$("\$CURRENT/bin/browser-use-terminal" update --check 2>&1)"
-  check_status="\$?"
-  printf '%s\n' "\$check_output" >"\$log" 2>/dev/null || true
-
-  if [ "\$check_status" -eq 0 ]; then
-    case "\$check_output" in
-      *"update available"*)
-        if [ ! -t 0 ]; then
-          printf '\n✨ Update available!\n' >&2
-          printf 'Run browser-use-terminal update to update.\n' >&2
-          printf 'Skipping update prompt because stdin is not interactive; launching current version.\n' >&2
-          return
-        fi
-        while :; do
-          printf '\n✨ Update available!\n\n' >&2
-          printf '  Release notes: https://github.com/%s/releases/latest\n\n' "\$BUT_RELEASE_REPO" >&2
-          printf '› 1. Update now (runs \`browser-use-terminal update\`)\n' >&2
-          printf '  2. Skip\n\n' >&2
-          printf '  Press enter to continue\n\n' >&2
-          printf 'Selection [1]: ' >&2
-          if ! IFS= read -r update_reply; then
-            printf '\nNo answer received; closing.\n' >&2
-            exit 0
-          fi
-          case "\$update_reply" in
-            "" | 1)
-              printf '\nUpdating Browser Use Terminal via \`browser-use-terminal update\`...\n' >&2
-              exec "\$CURRENT/bin/browser-use-terminal" update
-              ;;
-            2)
-              return
-              ;;
-            *)
-              printf 'Please choose 1 or 2.\n' >&2
-              ;;
-          esac
-        done
-        ;;
-    esac
-    return
-  fi
-
-  if [ "\${BUT_REQUIRE_LATEST:-0}" = "1" ]; then
-    cat "\$log" >&2 2>/dev/null || true
-    exit 1
-  fi
-  printf 'browser-use terminal update check failed; launching current version.\n' >&2
-}
-prompt_browser_use_terminal_update
 exec "\$CURRENT/bin/$target" "\$@"
 EOF
   chmod 0755 "$tmp_wrapper"
@@ -634,71 +569,8 @@ BUT_HOME_DIR="\${BUT_HOME:-$BUT_HOME_DIR}"
 CURRENT="\$BUT_HOME_DIR/packages/standalone/current"
 export BUT_HOME="\$BUT_HOME_DIR"
 export BUT_INSTALL_DIR="\${BUT_INSTALL_DIR:-$BIN_DIR}"
-export BUT_RELEASE_REPO="\${BUT_RELEASE_REPO:-$REPO}"
 export PYTHONPATH="\$CURRENT/python\${PYTHONPATH:+:\$PYTHONPATH}"
 if [ "\$#" -eq 0 ]; then
-  prompt_browser_use_terminal_update() {
-    case "\${BUT_AUTO_UPDATE:-1}" in
-      0 | false | FALSE | off | OFF | no | NO)
-        return
-        ;;
-    esac
-
-    [ -x "\$CURRENT/bin/browser-use-terminal" ] || return
-
-    log_dir="\$BUT_HOME_DIR/packages/standalone"
-    log="\$log_dir/last_update_check.log"
-    mkdir -p "\$log_dir" 2>/dev/null || return
-
-    check_output="\$("\$CURRENT/bin/browser-use-terminal" update --check 2>&1)"
-    check_status="\$?"
-    printf '%s\n' "\$check_output" >"\$log" 2>/dev/null || true
-
-    if [ "\$check_status" -eq 0 ]; then
-      case "\$check_output" in
-        *"update available"*)
-          if [ ! -t 0 ]; then
-            printf '\n✨ Update available!\n' >&2
-            printf 'Run browser-use-terminal update to update.\n' >&2
-            printf 'Skipping update prompt because stdin is not interactive; launching current version.\n' >&2
-            return
-          fi
-          while :; do
-            printf '\n✨ Update available!\n\n' >&2
-            printf '  Release notes: https://github.com/%s/releases/latest\n\n' "\$BUT_RELEASE_REPO" >&2
-            printf '› 1. Update now (runs \`browser-use-terminal update\`)\n' >&2
-            printf '  2. Skip\n\n' >&2
-            printf '  Press enter to continue\n\n' >&2
-            printf 'Selection [1]: ' >&2
-            if ! IFS= read -r update_reply; then
-              printf '\nNo answer received; closing.\n' >&2
-              exit 0
-            fi
-            case "\$update_reply" in
-              "" | 1)
-                printf '\nUpdating Browser Use Terminal via \`browser-use-terminal update\`...\n' >&2
-                exec "\$CURRENT/bin/browser-use-terminal" update
-                ;;
-              2)
-                return
-                ;;
-              *)
-                printf 'Please choose 1 or 2.\n' >&2
-                ;;
-            esac
-          done
-          ;;
-      esac
-      return
-    fi
-
-    if [ "\${BUT_REQUIRE_LATEST:-0}" = "1" ]; then
-      cat "\$log" >&2 2>/dev/null || true
-      exit 1
-    fi
-    printf 'browser-use terminal update check failed; launching current version.\n' >&2
-  }
-  prompt_browser_use_terminal_update
   exec "\$CURRENT/bin/but"
 fi
 exec "\$CURRENT/bin/browser-use-terminal" "\$@"
@@ -716,8 +588,6 @@ update_visible_commands() {
 }
 
 verify_visible_command() (
-  BUT_AUTO_UPDATE=0
-  export BUT_AUTO_UPDATE
   "$BIN_DIR/but" --version >/dev/null
   "$BIN_DIR/browser" --version >/dev/null
   "$BIN_DIR/browser-use" --version >/dev/null

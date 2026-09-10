@@ -19,7 +19,6 @@ write_tui_wrapper() {
   local path="$OUT_DIR/$name"
   cat >"$path" <<EOF
 #!/bin/sh
-export BUT_AUTO_UPDATE=0
 export BUT_AGENT_TOOLS_DIR="$AGENT_TOOLS_DIR"
 export PYTHONPATH="$ROOT/python\${PYTHONPATH:+:\$PYTHONPATH}"
 exec "$ROOT/target/debug/but" "\$@"
@@ -32,7 +31,6 @@ write_hybrid_wrapper() {
   local path="$OUT_DIR/$name"
   cat >"$path" <<EOF
 #!/bin/sh
-export BUT_AUTO_UPDATE=0
 export BUT_AGENT_TOOLS_DIR="$AGENT_TOOLS_DIR"
 export PYTHONPATH="$ROOT/python\${PYTHONPATH:+:\$PYTHONPATH}"
 if [ "\$#" -eq 0 ]; then

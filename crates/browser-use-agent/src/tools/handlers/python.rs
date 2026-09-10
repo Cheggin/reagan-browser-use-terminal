@@ -13,7 +13,7 @@
 //! snippet to the persistent worker and get back a
 //! [`browser_use_python_worker::RunPythonResponse`] (lib.rs:46). The
 //! `RealBackend` constructs the worker via
-//! `PythonWorker::start_with_browser_mode_and_env` (lib.rs:84).
+//! `PythonWorker::start_with_env` (lib.rs:84).
 //!
 //! ## Parity with the legacy dispatch
 //!
@@ -186,16 +186,10 @@ impl RealBackend {
 
     /// Start a worker (spawning an external Python process) and wrap it.
     ///
-    /// `browser_mode` and `extra_env` are forwarded verbatim to
-    /// `PythonWorker::start_with_browser_mode_and_env` (lib.rs:84).
-    pub fn start(
-        browser_mode: Option<&str>,
-        extra_env: &[(String, String)],
-    ) -> anyhow::Result<Self> {
-        let worker = PythonWorker::start_with_browser_mode_and_env(
-            browser_mode,
-            extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())),
-        )?;
+    /// `extra_env` is forwarded to `PythonWorker::start_with_env`.
+    pub fn start(extra_env: &[(String, String)]) -> anyhow::Result<Self> {
+        let worker =
+            PythonWorker::start_with_env(extra_env.iter().map(|(k, v)| (k.as_str(), v.as_str())))?;
         Ok(Self::new(worker))
     }
 }
@@ -344,8 +338,7 @@ fn render_result_block(resp: &RunPythonResponse) -> String {
 /// - `stdout`: the snippet's `text` (capped to [`MAX_INLINE_STDOUT_BYTES`]),
 ///   then any expression `outputs`, then a structured result/artifact/image
 ///   manifest (see [`render_result_block`]).
-/// - `stderr`: the snippet's uncaught-exception `error` (traceback), plus any
-///   `browser_harness_error`, surfaced distinctly.
+/// - `stderr`: the snippet's uncaught-exception `error` (traceback).
 /// - `exit_code`: `0` when `ok`, else `1`.
 ///
 /// The richer artifact/image RECORDING (durable `tool.image` /
@@ -374,25 +367,10 @@ pub fn map_response(resp: RunPythonResponse) -> ExecOutput {
         stdout.push_str(&result_block);
     }
 
-    // stderr carries failures distinctly: the uncaught-exception traceback
-    // (`error`) and, separately, any browser-harness setup error.
-    let mut stderr = String::new();
-    if let Some(err) = resp.error.as_deref() {
-        stderr.push_str(err);
-    }
-    if let Some(harness_err) = resp.browser_harness_error.as_deref() {
-        if !harness_err.trim().is_empty() {
-            if !stderr.is_empty() && !stderr.ends_with('\n') {
-                stderr.push('\n');
-            }
-            stderr.push_str(&format!("[python:browser_harness_error] {harness_err}"));
-        }
-    }
-
     ExecOutput {
         exit_code: if resp.ok { 0 } else { 1 },
         stdout,
-        stderr,
+        stderr: resp.error.unwrap_or_default(),
     }
 }
 

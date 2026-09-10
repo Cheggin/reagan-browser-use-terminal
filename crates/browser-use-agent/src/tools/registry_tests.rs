@@ -465,8 +465,6 @@ impl PythonBackend for FakePythonBackend {
             artifacts: Vec::new(),
             images: Vec::new(),
             browser_events: Vec::new(),
-            browser_harness_available: false,
-            browser_harness_error: None,
         })
     }
 }

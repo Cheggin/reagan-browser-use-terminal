@@ -1951,7 +1951,9 @@ fn drain_browser_script_delta(run: &mut BrowserScriptRun) -> Result<BrowserScrip
 }
 
 fn browser_script_python_command() -> Command {
-    if let Some(configured) = nonempty_os_var("LLM_BROWSER_BROWSER_SCRIPT_PYTHON") {
+    if let Some(configured) = nonempty_os_var("LLM_BROWSER_BROWSER_SCRIPT_PYTHON")
+        .or_else(|| nonempty_os_var("BROWSER_USE_PYTHON"))
+    {
         return Command::new(configured);
     }
     if let Some(venv) = nonempty_os_var("VIRTUAL_ENV") {
@@ -1964,15 +1966,6 @@ fn browser_script_python_command() -> Command {
         let candidate = venv_python_path(&repo_root.join(".venv"));
         if candidate.is_file() {
             return Command::new(candidate);
-        }
-        if repo_root.join("pyproject.toml").is_file() && command_exists("uv") {
-            let mut command = Command::new("uv");
-            command
-                .arg("run")
-                .arg("--project")
-                .arg(repo_root)
-                .arg("python");
-            return command;
         }
     }
     Command::new("python3")
@@ -2002,25 +1995,6 @@ fn repo_root_from_manifest() -> Option<PathBuf> {
         .parent()
         .and_then(Path::parent)
         .map(Path::to_path_buf)
-}
-
-fn command_exists(name: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|paths| {
-        std::env::split_paths(&paths).any(|dir| {
-            let candidate = dir.join(name);
-            if candidate.is_file() {
-                return true;
-            }
-            #[cfg(windows)]
-            {
-                dir.join(format!("{name}.exe")).is_file()
-            }
-            #[cfg(not(windows))]
-            {
-                false
-            }
-        })
-    })
 }
 
 fn join_bridge_with_timeout(bridge: thread::JoinHandle<()>, timeout: Duration) -> bool {
@@ -4580,7 +4554,7 @@ impl BrowserSession {
                 let targets = self.targets()?;
                 target_info = targets
                     .into_iter()
-                    .find(|target| target_url_contains_marker(target, marker));
+                    .find(|target| target_matches_profile_marker(target, marker));
                 if target_info.is_some() {
                     break;
                 }
@@ -4697,7 +4671,7 @@ impl BrowserSession {
                 let targets = self.targets_with_deadline(deadline)?;
                 target_info = targets
                     .into_iter()
-                    .find(|target| target_url_contains_marker(target, marker));
+                    .find(|target| target_matches_profile_marker(target, marker));
                 if target_info.is_some() {
                     break;
                 }
@@ -10097,16 +10071,16 @@ fn is_page_target(target: &Value) -> bool {
     target.get("type").and_then(Value::as_str) == Some("page")
 }
 
-fn target_url_contains_marker(target: &Value, marker: &str) -> bool {
-    is_profile_marker_target(target)
+fn target_matches_profile_marker(target: &Value, marker: &str) -> bool {
+    is_page_target(target)
         && target
             .get("url")
             .and_then(Value::as_str)
-            .is_some_and(|url| url.contains(marker))
+            .is_some_and(|url| url == profile_marker_target_url(marker))
 }
 
 fn profile_marker_target_url(marker: &str) -> String {
-    format!("https://browser-use.com/browser-use-profile-target/{marker}")
+    format!("about:blank#browser-use-profile-target-{marker}")
 }
 
 fn is_profile_marker_target(target: &Value) -> bool {
@@ -10114,7 +10088,7 @@ fn is_profile_marker_target(target: &Value) -> bool {
         && target
             .get("url")
             .and_then(Value::as_str)
-            .is_some_and(|url| url.contains("browser-use-profile-target"))
+            .is_some_and(|url| url.starts_with("about:blank#browser-use-profile-target-"))
 }
 
 fn is_remote_debugging_setup_target(target: &Value) -> bool {
@@ -10793,11 +10767,23 @@ mod tests {
     }
 
     #[test]
-    fn profile_marker_target_url_uses_browser_use_website_marker_page() {
-        let url = profile_marker_target_url("1780617777602");
+    fn profile_marker_selects_the_requested_profile_without_network_navigation() {
+        let marker = "1780617777602";
+        let url = profile_marker_target_url(marker);
+        assert_eq!(url, "about:blank#browser-use-profile-target-1780617777602");
+        let targets = vec![
+            json!({"type": "page", "targetId": "other-profile", "url": profile_marker_target_url("17806177776020")}),
+            json!({"type": "page", "targetId": "selected-profile", "url": url}),
+            json!({"type": "page", "targetId": "real-page", "url": "https://example.test"}),
+        ];
+        let selected = targets
+            .iter()
+            .find(|target| target_matches_profile_marker(target, marker))
+            .expect("selected profile marker");
+        assert_eq!(selected["targetId"], "selected-profile");
         assert_eq!(
-            url,
-            "https://browser-use.com/browser-use-profile-target/1780617777602"
+            select_initial_page_target(&targets, true).unwrap()["targetId"],
+            "real-page"
         );
     }
 
@@ -12528,8 +12514,8 @@ print("js invalid options guard ok")
             eprintln!("skipping project python environment test: missing repo root");
             return;
         };
-        if !repo_root.join(".venv").is_dir() && !command_exists("uv") {
-            eprintln!("skipping project python environment test: no .venv or uv");
+        if !venv_python_path(&repo_root.join(".venv")).is_file() {
+            eprintln!("skipping project python environment test: no installed project Python");
             return;
         }
 
@@ -12936,7 +12922,64 @@ print("type_text and missing selector ok")
     }
 
     #[test]
-    fn browser_script_http_get_matches_proxy_gzip_and_binary_contracts() {
+    fn browser_script_http_get_keeps_requests_direct_with_a_browser_use_key() {
+        let temp = tempfile::tempdir().unwrap();
+        let output = run_browser_script(
+            "script-http-get-direct",
+            temp.path(),
+            temp.path().join("artifacts"),
+            r#"
+import http.server
+import socket
+import threading
+
+requests = []
+
+class Handler(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        requests.append((self.command, self.path, self.headers.get("Authorization")))
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.end_headers()
+        self.wfile.write(b"direct")
+
+    def do_POST(self):
+        requests.append((self.command, self.path, self.rfile.read(int(self.headers["Content-Length"])).decode()))
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'{"status_code":200,"body":"proxied"}')
+
+server = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+thread = threading.Thread(target=server.serve_forever, daemon=True)
+thread.start()
+resolve = socket.getaddrinfo
+socket.getaddrinfo = lambda host, *args, **kwargs: resolve("127.0.0.1" if host == "public.example" else host, *args, **kwargs)
+urllib.request.install_opener(urllib.request.build_opener(urllib.request.ProxyHandler({})))
+os.environ["BROWSER_USE_API_KEY"] = "test-key"
+os.environ["FETCH_USE_URL"] = f"http://127.0.0.1:{server.server_port}"
+sys.modules["fetch_use"] = None
+url = f"http://public.example:{server.server_port}/private?token=test"
+try:
+    response = http_get(url, headers={"Authorization": "Bearer test-secret"})
+    assert response == "direct", (response, requests)
+    assert response.url == url
+    assert requests == [("GET", "/private?token=test", "Bearer test-secret")], requests
+finally:
+    server.shutdown()
+    thread.join()
+    server.server_close()
+"#,
+            10,
+        )
+        .unwrap();
+        assert!(output.ok, "{:?}\n{}", output.error, output.text);
+    }
+
+    #[test]
+    fn browser_script_http_get_preserves_gzip_and_binary_responses() {
         let temp = tempfile::tempdir().unwrap();
         let output = run_browser_script(
             "script-http-get",
@@ -12947,7 +12990,6 @@ import gzip
 import http.server
 import socketserver
 import threading
-import types
 
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
@@ -12993,31 +13035,6 @@ finally:
     server.shutdown()
     server.server_close()
 
-class FakeFetchModule:
-    @staticmethod
-    def fetch_sync(url, headers=None, timeout_ms=None):
-        assert headers == {"X": "1"}
-        assert timeout_ms == 1234
-        if url.endswith("/binary"):
-            return types.SimpleNamespace(
-                text="",
-                content=bytes([0, 159, 255]),
-                status_code=202,
-                headers={"x-proxy": "yes"},
-                url=url,
-            )
-        return types.SimpleNamespace(text="proxied", status_code=202, headers={"x-proxy": "yes"}, url=url)
-
-sys.modules["fetch_use"] = FakeFetchModule
-os.environ["BROWSER_USE_API_KEY"] = "test"
-proxied = http_get("https://example.test/data", headers={"X": "1"}, timeout=1.234)
-assert proxied == "proxied"
-assert proxied.status_code == 202
-assert proxied.headers["x-proxy"] == "yes"
-proxied_binary = http_get("https://example.test/binary", headers={"X": "1"}, timeout=1.234, binary=True)
-assert proxied_binary == bytes([0, 159, 255])
-assert proxied_binary.status_code == 202
-assert proxied_binary.content == bytes([0, 159, 255])
 print("http_get parity ok")
 "#,
             10,
@@ -13101,127 +13118,6 @@ print("http_get_many parity ok")
 
         assert!(output.ok, "{:?}\n{}", output.error, output.text);
         assert!(output.text.contains("http_get_many parity ok"));
-    }
-
-    #[test]
-    fn browser_script_http_get_vendored_proxy_private_bypass_and_error_fallback() {
-        let temp = tempfile::tempdir().unwrap();
-        let output = run_browser_script(
-            "script-http-get-vendored-proxy",
-            temp.path(),
-            temp.path().join("artifacts"),
-            r#"
-import http.server
-import json
-import os
-import socketserver
-import sys
-import threading
-
-assert _is_private_or_local_host("localhost")
-assert _is_private_or_local_host("127.0.0.1")
-assert _is_private_or_local_host("10.1.2.3")
-assert _is_private_or_local_host("192.168.0.5")
-assert _is_private_or_local_host("169.254.1.1")
-assert _is_private_or_local_host("printer.local")
-assert _is_private_or_local_host("wiki.internal")
-assert _is_private_or_local_host("intranet-host")
-assert not _is_private_or_local_host("example.com")
-assert not _is_private_or_local_host("8.8.8.8")
-
-proxy_calls = []
-proxy_mode = {"fail": False}
-
-class FakeFetchProxy(http.server.BaseHTTPRequestHandler):
-    def log_message(self, fmt, *args):
-        pass
-
-    def do_POST(self):
-        assert self.path == "/fetch"
-        assert self.headers.get("X-Browser-Use-API-Key") == "test-key"
-        req = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        proxy_calls.append(req["url"])
-        if proxy_mode["fail"]:
-            self.send_response(500)
-            self.end_headers()
-            return
-        body = json.dumps({
-            "status_code": 200,
-            "status": "200 OK",
-            "headers": {"x-proxy": "yes"},
-            "body": "proxied:" + req["url"],
-            "body_base64": "",
-            "is_binary": False,
-            "final_url": req["url"],
-            "redirect_count": 0,
-            "protocol": "HTTP/2.0",
-        }).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-class DirectTarget(http.server.BaseHTTPRequestHandler):
-    def log_message(self, fmt, *args):
-        pass
-
-    def do_GET(self):
-        body = b"direct"
-        self.send_response(200)
-        self.send_header("Content-Type", "text/plain; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
-
-proxy_server = socketserver.TCPServer(("127.0.0.1", 0), FakeFetchProxy)
-target_server = socketserver.TCPServer(("127.0.0.1", 0), DirectTarget)
-for server in (proxy_server, target_server):
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-target_base = f"http://127.0.0.1:{target_server.server_address[1]}"
-
-sys.modules.pop("fetch_use", None)  # force the VENDORED client path
-os.environ["BROWSER_USE_API_KEY"] = "test-key"
-os.environ["FETCH_USE_URL"] = f"http://127.0.0.1:{proxy_server.server_address[1]}"
-
-try:
-    # 1) public URL goes through the vendored proxy client
-    proxied = http_get("https://public.example/data")
-    assert proxied == "proxied:https://public.example/data", proxied
-    assert proxied.status_code == 200 and proxied.headers["x-proxy"] == "yes"
-
-    # 2) loopback/private host bypasses the proxy entirely
-    before = len(proxy_calls)
-    direct = http_get(target_base + "/anything")
-    assert direct == "direct", direct
-    assert len(proxy_calls) == before, "private host must never reach the proxy"
-
-    # 3) use_proxy=True forces even a private host through the proxy
-    forced = http_get(target_base + "/anything", use_proxy=True)
-    assert forced == "proxied:" + target_base + "/anything", forced
-
-    # 4) proxy failure falls back to direct; both errors surfaced when direct also fails
-    proxy_mode["fail"] = True
-    fallback = http_get(target_base + "/anything", use_proxy=True, timeout=3)
-    assert fallback == "direct", fallback
-    try:
-        http_get("https://no-such-host.invalid/x", timeout=3)
-    except RuntimeError as exc:
-        assert "fetch proxy also failed" in str(exc), exc
-    else:
-        raise AssertionError("expected both proxy and direct to fail")
-finally:
-    for server in (proxy_server, target_server):
-        server.shutdown()
-        server.server_close()
-print("http_get vendored proxy ok")
-"#,
-            20,
-        )
-        .unwrap();
-
-        assert!(output.ok, "{:?}\n{}", output.error, output.text);
-        assert!(output.text.contains("http_get vendored proxy ok"));
     }
 
     #[test]
@@ -13417,13 +13313,13 @@ print("bridge retry ok")
     }
 
     #[test]
-    fn browser_script_initial_wait_defaults_to_fifteen_seconds_and_clamps_env() {
+    fn browser_script_initial_wait_defaults_to_thirty_seconds_and_clamps_env() {
         {
             let _env = EnvRestore::unset(&[
                 "BU_BROWSER_SCRIPT_INITIAL_WAIT_MS",
                 "BROWSER_SCRIPT_INITIAL_WAIT_MS",
             ]);
-            assert_eq!(browser_script_initial_wait_ms(), 15_000);
+            assert_eq!(browser_script_initial_wait_ms(), 30_000);
         }
         {
             let _env = EnvRestore::set(&[("BU_BROWSER_SCRIPT_INITIAL_WAIT_MS", "1500")]);

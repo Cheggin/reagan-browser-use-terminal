@@ -49,15 +49,15 @@ BIN_DIR="$tmp/bin"
 BUT_HOME_DIR="$tmp/home"
 STANDALONE_ROOT="$BUT_HOME_DIR/packages/standalone"
 CURRENT_LINK="$STANDALONE_ROOT/current"
-REPO="browser-use/terminal"
-HOME="$tmp/user-home"
+REPO="Cheggin/reagan-browser-use-terminal"
+profile_fixture="$tmp/user-home"
 SHELL="/bin/bash"
 os="linux"
 tmp_dir="$tmp"
 BUT_HOME="$BUT_HOME_DIR"
-export HOME SHELL BUT_HOME
+export SHELL BUT_HOME
 
-mkdir -p "$CURRENT_LINK/bin" "$BIN_DIR" "$STANDALONE_ROOT" "$HOME"
+mkdir -p "$CURRENT_LINK/bin" "$BIN_DIR" "$STANDALONE_ROOT" "$profile_fixture"
 
 cat >"$CURRENT_LINK/bin/but" <<'EOF'
 #!/bin/sh
@@ -71,22 +71,6 @@ EOF
 cat >"$CURRENT_LINK/bin/browser-use-terminal" <<EOF
 #!/bin/sh
 echo "cli \$*" >>"$tmp/update.log"
-if [ "\$1" = "update" ]; then
-  if [ "\${BUT_TEST_UPDATE_FAIL:-0}" = "1" ]; then
-    echo "forced update failure" >&2
-    exit 42
-  fi
-  if [ "\${2:-}" = "--check" ]; then
-    if [ "\${BUT_TEST_UPDATE_AVAILABLE:-1}" = "1" ]; then
-      echo "browser-use terminal update available: 0.1.0 -> 0.2.0"
-      echo "Run browser-use-terminal update to install it."
-    else
-      echo "browser-use terminal is up to date (0.1.0)."
-    fi
-    exit 0
-  fi
-  exit 0
-fi
 echo "cli \$*"
 EOF
 
@@ -122,7 +106,8 @@ case ":$PATH_WITHOUT_BIN:" in
     ;;
 esac
 
-profile="$HOME/.bashrc"
+pick_profile() { printf '%s\n' "$profile_fixture/.bashrc"; }
+profile="$profile_fixture/.bashrc"
 printf "%s\n" "alias browser='old-browser'" >"$profile"
 PATH="$PATH_WITHOUT_BIN" add_to_path
 profile_contents="$(cat "$profile")"
@@ -142,135 +127,18 @@ profile_contents="$(cat "$profile")"
 assert_contains "export PATH=\"$BIN_DIR:\$PATH\"" "$profile_contents" "installer preserves existing managed PATH line"
 assert_contains "alias browser=\"$BIN_DIR/browser\"" "$profile_contents" "installer updates existing managed block with browser alias"
 
+for name in but browser browser-use browser-use-terminal; do
+  : >"$tmp/update.log"
+  out="$("$BIN_DIR/$name" 2>"$tmp/launcher.err")"
+  assert_eq "but " "$out" "$name launches the TUI"
+  assert_eq "" "$(cat "$tmp/update.log")" "$name does not contact an updater on startup"
+  assert_eq "" "$(cat "$tmp/launcher.err")" "$name launches without an update prompt"
+done
+
 : >"$tmp/update.log"
+out="$("$BIN_DIR/browser" history)"
+assert_eq "cli history" "$out" "browser forwards explicit CLI arguments"
+assert_eq "cli history" "$(cat "$tmp/update.log")" "CLI invocation has no extra requests"
+
 verify_visible_command
-assert_not_contains "update --release latest" "$(cat "$tmp/update.log")" "installer verification skips auto-update"
-
-: >"$tmp/update.log"
-out="$("$BIN_DIR/browser" 2>"$tmp/browser-update.err")"
-assert_eq "but " "$out" "browser launches TUI after non-interactive update prompt"
-assert_eq "cli update --check" "$(cat "$tmp/update.log")" "browser checks update status on startup"
-assert_contains "Update available!" "$(cat "$tmp/browser-update.err")" "browser reports available update before launch"
-assert_not_contains "Update available! 0.1.0 -> 0.2.0" "$(cat "$tmp/browser-update.err")" "browser prompt omits version range"
-assert_contains "Run browser-use-terminal update to update." "$(cat "$tmp/browser-update.err")" "browser gives update command"
-assert_contains "Skipping update prompt because stdin is not interactive" "$(cat "$tmp/browser-update.err")" "browser does not hang non-interactive launches"
-assert_not_contains "update --release latest" "$(cat "$tmp/update.log")" "browser does not auto-install on startup"
-
-: >"$tmp/update.log"
-out="$("$BIN_DIR/browser-use" 2>"$tmp/browser-use-update.err")"
-assert_eq "but " "$out" "browser-use launches TUI after non-interactive update prompt"
-assert_eq "cli update --check" "$(cat "$tmp/update.log")" "browser-use checks update status on startup"
-assert_contains "Run browser-use-terminal update to update." "$(cat "$tmp/browser-use-update.err")" "browser-use gives update command"
-assert_not_contains "update --release latest" "$(cat "$tmp/update.log")" "browser-use does not auto-install on startup"
-
-: >"$tmp/update.log"
-out="$("$BIN_DIR/browser-use-terminal" 2>"$tmp/browser-use-terminal-update.err")"
-assert_eq "but " "$out" "browser-use-terminal launches TUI with no args"
-assert_eq "cli update --check" "$(cat "$tmp/update.log")" "browser-use-terminal checks update status on startup"
-assert_contains "Run browser-use-terminal update to update." "$(cat "$tmp/browser-use-terminal-update.err")" "browser-use-terminal gives update command"
-assert_not_contains "update --release latest" "$(cat "$tmp/update.log")" "browser-use-terminal does not auto-install on startup"
-
-: >"$tmp/update.log"
-out="$("$BIN_DIR/browser" update --check)"
-assert_contains "browser-use terminal update available: 0.1.0 -> 0.2.0" "$out" "browser routes update check output to management CLI"
-assert_eq "cli update --check" "$(cat "$tmp/update.log")" "browser update --check does not preflight auto-update"
-
-: >"$tmp/update.log"
-out="$(BUT_AUTO_UPDATE=0 "$BIN_DIR/browser")"
-assert_eq "but " "$out" "BUT_AUTO_UPDATE=0 still launches TUI"
-assert_eq "" "$(cat "$tmp/update.log")" "BUT_AUTO_UPDATE=0 skips update"
-
-: >"$tmp/update.log"
-BUT_TEST_UPDATE_AVAILABLE=0 "$BIN_DIR/browser" >/dev/null
-assert_eq "cli update --check" "$(cat "$tmp/update.log")" "up-to-date startup still checks latest"
-
-: >"$tmp/update.log"
-if BUT_TEST_UPDATE_FAIL=1 BUT_REQUIRE_LATEST=1 "$BIN_DIR/browser" >/dev/null 2>"$tmp/fail.err"; then
-  printf 'FAIL: BUT_REQUIRE_LATEST=1 should fail when update fails\n' >&2
-  exit 1
-fi
-assert_contains "forced update failure" "$(cat "$STANDALONE_ROOT/last_update_check.log" "$tmp/fail.err" 2>/dev/null)" "fail-closed reports updater failure"
-
-python3 - "$BIN_DIR/browser" <<'PY'
-import os
-import pty
-import select
-import subprocess
-import sys
-import time
-
-cmd = sys.argv[1]
-
-
-def run_with_choice(choice: bytes, done_marker: bytes) -> str:
-    master, slave = pty.openpty()
-    env = os.environ.copy()
-    env["BUT_TEST_UPDATE_AVAILABLE"] = "1"
-    proc = subprocess.Popen(
-        [cmd],
-        stdin=slave,
-        stdout=slave,
-        stderr=slave,
-        env=env,
-        close_fds=True,
-    )
-    os.close(slave)
-    output = bytearray()
-    sent = False
-    deadline = time.time() + 5
-    try:
-        while time.time() < deadline:
-            ready, _, _ = select.select([master], [], [], 0.05)
-            if ready:
-                try:
-                    chunk = os.read(master, 4096)
-                except OSError:
-                    break
-                if not chunk:
-                    break
-                output.extend(chunk)
-            if not sent and b"Selection [1]:" in output:
-                os.write(master, choice)
-                sent = True
-            if sent and done_marker in output:
-                break
-            if proc.poll() is not None:
-                for _ in range(10):
-                    ready, _, _ = select.select([master], [], [], 0.05)
-                    if not ready:
-                        break
-                    try:
-                        chunk = os.read(master, 4096)
-                    except OSError:
-                        break
-                    if not chunk:
-                        break
-                    output.extend(chunk)
-                    break
-                break
-        if done_marker not in output and proc.poll() is None:
-            proc.kill()
-            text = output.decode(errors="replace")
-            raise SystemExit(f"wrapper prompt did not finish:\n{text}")
-    finally:
-        os.close(master)
-    text = output.decode(errors="replace")
-    if "Update now (runs `browser-use-terminal update`)" not in text:
-        raise SystemExit(f"missing update command in prompt:\n{text}")
-    if "Skip until next version" in text:
-        raise SystemExit(f"unexpected third option in prompt:\n{text}")
-    return text
-
-
-update_text = run_with_choice(b"\r", b"Updating Browser Use Terminal via")
-if "but " in update_text:
-    raise SystemExit(f"update should exit before launching TUI:\n{update_text}")
-if "Updating Browser Use Terminal via `browser-use-terminal update`" not in update_text:
-    raise SystemExit(f"update selection should run updater:\n{update_text}")
-
-skip_text = run_with_choice(b"2\r", b"but ")
-if "but " not in skip_text:
-    raise SystemExit(f"skip should launch TUI:\n{skip_text}")
-PY
-
-printf 'install wrapper smoke passed\n'
+printf 'install wrapper tests passed\n'

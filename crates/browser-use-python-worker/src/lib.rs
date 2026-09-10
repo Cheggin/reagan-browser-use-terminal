@@ -23,9 +23,7 @@ pub struct PythonWorker {
 #[derive(Clone, Debug)]
 struct PythonWorkerLaunch {
     program: PathBuf,
-    args: Vec<String>,
     pythonpath: OsString,
-    browser_mode: Option<String>,
     extra_env: Vec<(OsString, OsString)>,
 }
 
@@ -38,8 +36,6 @@ struct RunPythonRequest {
     code: String,
     cancel_requested: bool,
     timeout_seconds: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    control: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -58,10 +54,6 @@ pub struct RunPythonResponse {
     pub images: Vec<Value>,
     #[serde(default)]
     pub browser_events: Vec<Value>,
-    #[serde(default)]
-    pub browser_harness_available: bool,
-    #[serde(default)]
-    pub browser_harness_error: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -74,23 +66,15 @@ pub struct PythonWorkerEvent {
 
 impl PythonWorker {
     pub fn start() -> Result<Self> {
-        Self::start_with_browser_mode(None)
+        Self::start_with_env(std::iter::empty::<(&str, &str)>())
     }
 
-    pub fn start_with_browser_mode(browser_mode: Option<&str>) -> Result<Self> {
-        Self::start_with_browser_mode_and_env(browser_mode, std::iter::empty::<(&str, &str)>())
-    }
-
-    pub fn start_with_browser_mode_and_env<I, K, V>(
-        browser_mode: Option<&str>,
-        extra_env: I,
-    ) -> Result<Self>
+    pub fn start_with_env<I, K, V>(extra_env: I) -> Result<Self>
     where
         I: IntoIterator<Item = (K, V)>,
         K: AsRef<OsStr>,
         V: AsRef<OsStr>,
     {
-        let cwd = std::env::current_dir()?;
         let mut paths = Vec::new();
         if let Some(path) = installed_python_path() {
             paths.push(path);
@@ -103,17 +87,6 @@ impl PythonWorker {
         if workspace_python.exists() {
             paths.push(workspace_python);
         }
-        let workspace_src = repo_root.join("src");
-        if workspace_src.exists() {
-            paths.push(workspace_src);
-        }
-        let cwd_src = cwd.join("src");
-        if cwd_src.exists() {
-            paths.push(cwd_src);
-        }
-        if let Some(path) = std::env::var_os("BROWSER_HARNESS_SRC") {
-            paths.push(path.into());
-        }
         if let Some(path) = std::env::var_os("PYTHONPATH") {
             paths.extend(std::env::split_paths(&path));
         }
@@ -122,91 +95,51 @@ impl PythonWorker {
             .into_iter()
             .map(|(key, value)| (key.as_ref().to_os_string(), value.as_ref().to_os_string()))
             .collect::<Vec<_>>();
-        Self::start_with_default_runtime(pythonpath, browser_mode, &extra_env)
+        Self::start_with_default_runtime(pythonpath, &extra_env)
     }
 
     fn start_with_default_runtime(
         pythonpath: impl AsRef<OsStr>,
-        browser_mode: Option<&str>,
         extra_env: &[(OsString, OsString)],
     ) -> Result<Self> {
-        if let Some(python) =
-            std::env::var_os("BROWSER_USE_PYTHON").filter(|value| !value.is_empty())
-        {
-            return Self::start_with_program_args(
-                Path::new(&python),
-                &[],
-                pythonpath.as_ref(),
-                browser_mode,
-                extra_env,
-            )
-            .with_context(|| {
-                format!(
-                    "start python worker with BROWSER_USE_PYTHON={}",
-                    python.to_string_lossy()
-                )
-            });
-        }
-        if std::env::var_os("LLM_BROWSER_PYTHON_WORKER_DIRECT").is_none() {
-            let uv = PathBuf::from("uv");
-            let args = [
-                "run",
-                "--quiet",
-                "--with",
-                "cdp-use==1.4.5",
-                "--with",
-                "fetch-use==0.4.0",
-                "--with",
-                "pillow==12.2.0",
-                "python",
-            ];
-            if let Ok(worker) = Self::start_with_program_args(
-                &uv,
-                &args,
-                pythonpath.as_ref(),
-                browser_mode,
-                extra_env,
-            ) {
-                return Ok(worker);
-            }
-        }
-        if let Ok(worker) = Self::start_with_program_args(
-            Path::new("python3"),
-            &[],
-            pythonpath.as_ref(),
-            browser_mode,
-            extra_env,
-        ) {
-            return Ok(worker);
-        }
-        Self::start_with_program_args(
-            Path::new("python"),
-            &[],
-            pythonpath.as_ref(),
-            browser_mode,
-            extra_env,
-        )
+        let python = std::env::var_os("BROWSER_USE_PYTHON")
+            .filter(|value| !value.is_empty())
+            .map(PathBuf::from)
+            .or_else(|| {
+                let executable = if cfg!(windows) {
+                    "Scripts/python.exe"
+                } else {
+                    "bin/python"
+                };
+                std::env::var_os("VIRTUAL_ENV")
+                    .filter(|value| !value.is_empty())
+                    .map(PathBuf::from)
+                    .into_iter()
+                    .chain(std::iter::once(
+                        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../.venv"),
+                    ))
+                    .map(|venv| venv.join(executable))
+                    .find(|python| python.is_file())
+            })
+            .unwrap_or_else(|| PathBuf::from(if cfg!(windows) { "python" } else { "python3" }));
+        Self::start_with_program(&python, pythonpath.as_ref(), extra_env)
     }
 
     pub fn start_with_pythonpath(
         python: impl AsRef<Path>,
         pythonpath: impl AsRef<OsStr>,
     ) -> Result<Self> {
-        Self::start_with_program_args(python.as_ref(), &[], pythonpath.as_ref(), None, &[])
+        Self::start_with_program(python.as_ref(), pythonpath.as_ref(), &[])
     }
 
-    fn start_with_program_args(
+    fn start_with_program(
         program: &Path,
-        args: &[&str],
         pythonpath: &OsStr,
-        browser_mode: Option<&str>,
         extra_env: &[(OsString, OsString)],
     ) -> Result<Self> {
         let launch = PythonWorkerLaunch {
             program: program.to_path_buf(),
-            args: args.iter().map(|arg| (*arg).to_string()).collect(),
             pythonpath: pythonpath.to_os_string(),
-            browser_mode: browser_mode.map(str::to_string),
             extra_env: extra_env.to_vec(),
         };
         let (child, stdin, stdout) = spawn_python_worker(&launch)?;
@@ -338,7 +271,6 @@ impl PythonWorker {
             code: code.to_string(),
             cancel_requested: false,
             timeout_seconds,
-            control: None,
         };
         self.next_id += 1;
         let line = serde_json::to_string(&request)?;
@@ -368,8 +300,6 @@ impl PythonWorker {
                     artifacts: Vec::new(),
                     images: Vec::new(),
                     browser_events: Vec::new(),
-                    browser_harness_available: false,
-                    browser_harness_error: None,
                 });
             };
             let trimmed = response.trim();
@@ -397,45 +327,6 @@ impl PythonWorker {
             return serde_json::from_value(value).context("parse python worker response");
         }
     }
-
-    pub fn shutdown_owned_cloud_browser(&mut self) -> Result<Option<Value>> {
-        let cwd = std::env::current_dir()?;
-        let request = RunPythonRequest {
-            id: format!("py-{}", self.next_id),
-            session_id: "__worker_control__".to_string(),
-            cwd: cwd.display().to_string(),
-            artifact_dir: cwd
-                .join(".browser-use")
-                .join("control-artifacts")
-                .display()
-                .to_string(),
-            code: String::new(),
-            cancel_requested: false,
-            timeout_seconds: Some(5.0),
-            control: Some("shutdown_owned_cloud_browser".to_string()),
-        };
-        self.next_id += 1;
-        let line = serde_json::to_string(&request)?;
-        writeln!(self.stdin, "{line}")?;
-        self.stdin.flush()?;
-
-        loop {
-            let mut response = String::new();
-            let bytes = self.stdout.read_line(&mut response)?;
-            if bytes == 0 {
-                return Ok(None);
-            }
-            let trimmed = response.trim();
-            let value: Value = match serde_json::from_str(trimmed) {
-                Ok(value) => value,
-                Err(_) => continue,
-            };
-            if value.get("event").is_some() {
-                continue;
-            }
-            return Ok(value.get("data").cloned());
-        }
-    }
 }
 
 fn installed_python_path() -> Option<PathBuf> {
@@ -454,19 +345,11 @@ fn spawn_python_worker(
 ) -> Result<(Child, ChildStdin, BufReader<ChildStdout>)> {
     let mut command = Command::new(&launch.program);
     command
-        .args(&launch.args)
         .arg("-m")
         .arg("llm_browser_worker.worker")
         .env("PYTHONUNBUFFERED", "1")
         .env("PYTHONPATH", &launch.pythonpath);
     command.envs(launch.extra_env.iter().cloned());
-    if let Some(browser_mode) = launch
-        .browser_mode
-        .as_deref()
-        .filter(|mode| !mode.trim().is_empty())
-    {
-        command.env("LLM_BROWSER_BROWSER_MODE", browser_mode);
-    }
     #[cfg(unix)]
     {
         command.process_group(0);
@@ -524,6 +407,50 @@ impl Drop for PythonWorker {
 mod tests {
     use super::*;
     use std::path::PathBuf;
+
+    #[cfg(unix)]
+    #[test]
+    fn worker_default_runtime_never_starts_package_manager() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+
+        let repo_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .context("repo root")?;
+        let temp = tempfile::tempdir()?;
+        let activity = temp.path().join("package-manager-started");
+        let uv = temp.path().join("uv");
+        std::fs::write(
+            &uv,
+            "#!/bin/sh\nprintf invoked > \"$PACKAGE_MANAGER_ACTIVITY\"\nexec python3 -m llm_browser_worker.worker\n",
+        )?;
+        std::fs::set_permissions(&uv, std::fs::Permissions::from_mode(0o755))?;
+        let path = std::env::join_paths(std::iter::once(temp.path().to_path_buf()).chain(
+            std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()),
+        ))?;
+        let env = [
+            (OsString::from("PATH"), path),
+            (
+                OsString::from("PACKAGE_MANAGER_ACTIVITY"),
+                activity.as_os_str().to_owned(),
+            ),
+            (
+                OsString::from("BH_AGENT_WORKSPACE"),
+                temp.path().join("workspace").into_os_string(),
+            ),
+        ];
+        let mut worker = PythonWorker::start_with_default_runtime(repo_root.join("python"), &env)?;
+        let response = worker.run(
+            "local",
+            temp.path(),
+            temp.path().join("artifacts"),
+            "result = 6 * 7",
+        )?;
+        assert!(response.ok, "{response:?}");
+        assert_eq!(response.data, 42);
+        assert!(!activity.exists(), "worker invoked a package manager");
+        Ok(())
+    }
 
     #[test]
     fn worker_keeps_a_persistent_namespace_per_session() -> Result<()> {
@@ -684,8 +611,6 @@ for line in sys.stdin:
         "artifacts": [],
         "images": [],
         "browser_events": [],
-        "browser_harness_available": True,
-        "browser_harness_error": None,
     }), flush=True)
 "#,
         )?;
@@ -757,320 +682,6 @@ for line in sys.stdin:
         assert_eq!(events[0].payload["text"], "first");
         assert_eq!(events[1].event, "browser");
         assert_eq!(events[1].payload["type"], "browser.state");
-        Ok(())
-    }
-
-    #[test]
-    fn worker_lazily_ensures_browser_harness_and_emits_current_tab_state() -> Result<()> {
-        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .context("repo root")?
-            .to_path_buf();
-        let temp = tempfile::tempdir()?;
-        let fake_harness = temp.path().join("browser_harness");
-        std::fs::create_dir_all(&fake_harness)?;
-        std::fs::write(fake_harness.join("__init__.py"), "")?;
-        std::fs::write(
-            fake_harness.join("admin.py"),
-            r#"
-started = False
-
-def ensure_daemon():
-    global started
-    started = True
-
-def daemon_alive():
-    return started
-"#,
-        )?;
-        std::fs::write(
-            fake_harness.join("helpers.py"),
-            r#"
-__all__ = ["cdp", "goto_url", "current_tab"]
-
-def cdp(method, session_id=None, **params):
-    from browser_harness import admin
-    if not admin.started:
-        raise RuntimeError("daemon was not ensured")
-    return {"method": method, "params": params, "session_id": session_id}
-
-def goto_url(url):
-    return cdp("Page.navigate", url=url)
-
-def current_tab():
-    return {"targetId": "target-1", "url": "https://example.com", "title": "Example Domain"}
-"#,
-        )?;
-        let pythonpath =
-            std::env::join_paths([repo_root.join("python"), temp.path().to_path_buf()])?;
-        let mut worker = PythonWorker::start_with_pythonpath("python3", pythonpath)?;
-        let mut events = Vec::new();
-        let response = worker.run_with_events(
-            "s1",
-            temp.path(),
-            temp.path().join("artifacts"),
-            "result = goto_url('https://example.com')",
-            |event| events.push(event),
-        )?;
-        assert!(response.ok, "{response:?}");
-        assert!(response.browser_harness_available);
-        assert_eq!(response.data["method"], "Page.navigate");
-        assert_eq!(response.browser_events[0]["type"], "browser.state");
-        assert_eq!(
-            response.browser_events[0]["payload"]["url"],
-            "https://example.com"
-        );
-        assert!(events.iter().any(|event| event.event == "browser"
-            && event.payload["payload"]["title"] == "Example Domain"));
-        Ok(())
-    }
-
-    #[test]
-    fn worker_can_index_browser_harness_download_outputs() -> Result<()> {
-        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .context("repo root")?
-            .to_path_buf();
-        let temp = tempfile::tempdir()?;
-        let fake_harness = temp.path().join("browser_harness");
-        std::fs::create_dir_all(&fake_harness)?;
-        std::fs::write(fake_harness.join("__init__.py"), "")?;
-        std::fs::write(
-            fake_harness.join("admin.py"),
-            r#"
-started = False
-
-def ensure_daemon():
-    global started
-    started = True
-
-def daemon_alive():
-    return started
-"#,
-        )?;
-        std::fs::write(
-            fake_harness.join("helpers.py"),
-            r#"
-import os
-from pathlib import Path
-
-__all__ = ["cdp", "download_file", "current_tab"]
-
-def cdp(method, session_id=None, **params):
-    from browser_harness import admin
-    if not admin.started:
-        raise RuntimeError("daemon was not ensured")
-    return {"method": method, "params": params, "session_id": session_id}
-
-def download_file(name):
-    cdp("Browser.downloadWillBegin", suggestedFilename=name)
-    path = Path(os.getcwd()) / name
-    path.write_text("downloaded", encoding="utf-8")
-    return str(path)
-
-def current_tab():
-    return {"targetId": "target-download", "url": "https://example.com/download", "title": "Download"}
-"#,
-        )?;
-        let pythonpath =
-            std::env::join_paths([repo_root.join("python"), temp.path().to_path_buf()])?;
-        let mut worker = PythonWorker::start_with_pythonpath("python3", pythonpath)?;
-        let response = worker.run(
-            "s1",
-            temp.path(),
-            temp.path().join("artifacts"),
-            "path = download_file('report.csv')\ncopy_artifact(path, kind='file')\nresult = {'download': path}",
-        )?;
-        assert!(response.ok, "{response:?}");
-        assert!(response.browser_harness_available);
-        assert_eq!(response.artifacts[0]["kind"], "file");
-        assert_eq!(response.artifacts[0]["bytes"], 10);
-        assert_eq!(
-            response.browser_events[0]["payload"]["target_id"],
-            "target-download"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn worker_refreshes_browser_identity_from_harness_each_call() -> Result<()> {
-        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .context("repo root")?
-            .to_path_buf();
-        let temp = tempfile::tempdir()?;
-        let fake_harness = temp.path().join("browser_harness");
-        std::fs::create_dir_all(&fake_harness)?;
-        std::fs::write(fake_harness.join("__init__.py"), "")?;
-        std::fs::write(
-            fake_harness.join("admin.py"),
-            r#"
-started = False
-
-def ensure_daemon():
-    global started
-    started = True
-
-def daemon_alive():
-    return started
-"#,
-        )?;
-        std::fs::write(
-            fake_harness.join("helpers.py"),
-            r#"
-__all__ = ["cdp", "goto_url", "current_tab"]
-count = 0
-
-def cdp(method, session_id=None, **params):
-    from browser_harness import admin
-    if not admin.started:
-        raise RuntimeError("daemon was not ensured")
-    return {"method": method, "params": params, "session_id": session_id}
-
-def goto_url(url):
-    return cdp("Page.navigate", url=url)
-
-def current_tab():
-    global count
-    count += 1
-    return {"targetId": f"target-{count}", "url": f"https://example.com/{count}", "title": f"Page {count}"}
-"#,
-        )?;
-        let pythonpath =
-            std::env::join_paths([repo_root.join("python"), temp.path().to_path_buf()])?;
-        let mut worker = PythonWorker::start_with_pythonpath("python3", pythonpath)?;
-        let first = worker.run(
-            "s1",
-            temp.path(),
-            temp.path().join("artifacts"),
-            "result = goto_url('https://example.com/first')",
-        )?;
-        let second = worker.run(
-            "s1",
-            temp.path(),
-            temp.path().join("artifacts"),
-            "result = goto_url('https://example.com/second')",
-        )?;
-        assert!(first.ok, "{first:?}");
-        assert!(second.ok, "{second:?}");
-        assert_eq!(first.browser_events[0]["payload"]["target_id"], "target-1");
-        assert_eq!(second.browser_events[0]["payload"]["target_id"], "target-2");
-        assert_eq!(
-            second.browser_events[0]["payload"]["url"],
-            "https://example.com/2"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn worker_emits_explicit_browser_identity_changes() -> Result<()> {
-        let repo_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .and_then(Path::parent)
-            .context("repo root")?
-            .to_path_buf();
-        let temp = tempfile::tempdir()?;
-        let fake_harness = temp.path().join("browser_harness");
-        std::fs::create_dir_all(&fake_harness)?;
-        std::fs::write(fake_harness.join("__init__.py"), "")?;
-        std::fs::write(
-            fake_harness.join("admin.py"),
-            r#"
-started = False
-
-def ensure_daemon():
-    global started
-    started = True
-
-def daemon_alive():
-    return started
-"#,
-        )?;
-        std::fs::write(
-            fake_harness.join("helpers.py"),
-            r#"
-__all__ = ["cdp", "goto_url", "current_tab", "set_identity"]
-target_id = "target-1"
-session_id = "session-1"
-url = "https://example.com/one"
-title = "One"
-
-def _send(request):
-    if request.get("meta") == "connection_status":
-        return {
-            "target_id": target_id,
-            "session_id": session_id,
-            "page": {"targetId": target_id, "url": url, "title": title},
-        }
-    return {}
-
-def cdp(method, session_id=None, **params):
-    from browser_harness import admin
-    if not admin.started:
-        raise RuntimeError("daemon was not ensured")
-    return {"method": method, "params": params, "session_id": session_id}
-
-def goto_url(next_url):
-    cdp("Page.navigate", url=next_url)
-    return {"ok": True}
-
-def current_tab():
-    return {"targetId": target_id, "url": url, "title": title}
-
-def set_identity(next_target_id, next_session_id, next_url, next_title):
-    global target_id, session_id, url, title
-    target_id = next_target_id
-    session_id = next_session_id
-    url = next_url
-    title = next_title
-"#,
-        )?;
-        let pythonpath =
-            std::env::join_paths([repo_root.join("python"), temp.path().to_path_buf()])?;
-        let mut worker = PythonWorker::start_with_pythonpath("python3", pythonpath)?;
-
-        let first = worker.run(
-            "s1",
-            temp.path(),
-            temp.path().join("artifacts"),
-            "result = goto_url('https://example.com/one')",
-        )?;
-        assert!(first.ok, "{first:?}");
-        assert!(first
-            .browser_events
-            .iter()
-            .any(|event| event["type"] == "browser.connected"));
-
-        let second = worker.run(
-            "s1",
-            temp.path(),
-            temp.path().join("artifacts"),
-            "set_identity('target-1', 'session-2', 'https://example.com/two', 'Two')",
-        )?;
-        assert!(second.ok, "{second:?}");
-        assert!(second
-            .browser_events
-            .iter()
-            .any(|event| event["type"] == "browser.reconnected"
-                && event["payload"]["previous_session_id"] == "session-1"
-                && event["payload"]["stale_object_ids"] == true));
-
-        let third = worker.run(
-            "s1",
-            temp.path(),
-            temp.path().join("artifacts"),
-            "set_identity('target-2', 'session-3', 'https://example.com/three', 'Three')",
-        )?;
-        assert!(third.ok, "{third:?}");
-        assert!(third
-            .browser_events
-            .iter()
-            .any(|event| event["type"] == "browser.target_changed"
-                && event["payload"]["previous_target_id"] == "target-1"
-                && event["payload"]["stale_object_ids"] == true));
         Ok(())
     }
 }
